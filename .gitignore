@@ -1,0 +1,62 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Packaging / build
+build/
+dist/
+*.egg
+*.egg-info/
+.eggs/
+*.whl
+pip-wheel-metadata/
+sdist/
+wheels/
+share/python-wheels/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+.env/
+.python-version
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+*.pem
+
+# Test / type / lint caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+.cache/
+coverage.xml
+*.cover
+.dmypy.json
+dmypy.json
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Local tooling
+.uv/
+uv.lock
