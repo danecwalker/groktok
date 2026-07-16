@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="assets/logo.png" alt="groktok logo" width="160" height="160">
-</p>
-
 # groktok
 
 CLI for your **Grok subscription weekly usage** and **monthly usage**.
