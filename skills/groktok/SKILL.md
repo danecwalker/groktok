@@ -1,0 +1,1 @@
+../../.grok/skills/groktok/SKILL.md

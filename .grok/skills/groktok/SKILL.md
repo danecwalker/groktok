@@ -9,7 +9,7 @@ description: >
 metadata:
   short-description: "Better Grok usage (weekly pool, tokens, cost)"
   author: danecwalker
-compatibility: Requires Python 3.9+ and a Grok login (grok login). Optional: uv for install.
+compatibility: "Requires Python 3.9+ and a Grok login (grok login). Optional: uv for install."
 ---
 
 # groktok — better Grok usage
