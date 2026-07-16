@@ -106,6 +106,48 @@ You can also run without installing:
 PYTHONPATH=src python3 -m groktok
 ```
 
+## Grok skill (agent `/usage` upgrade)
+
+Install a Grok skill so the agent runs **groktok** instead of the thin built-in
+usage view when you ask about pool, tokens, remaining credits, or `/usage`.
+
+### Recommended: skills CLI (global)
+
+```bash
+# installs the skill for your agents (Grok, Claude, Cursor, …)
+npx skills add danecwalker/groktok -g -y
+```
+
+Or install only the `groktok` skill:
+
+```bash
+npx skills add danecwalker/groktok -g -y -s groktok
+```
+
+### Manual (Grok user skills)
+
+```bash
+mkdir -p ~/.grok/skills/groktok
+curl -fsSL https://raw.githubusercontent.com/danecwalker/groktok/main/.grok/skills/groktok/SKILL.md \
+  -o ~/.grok/skills/groktok/SKILL.md
+```
+
+### From a clone of this repo
+
+Project skills under `.grok/skills/groktok/` load automatically when you open
+the repo in Grok Build. No extra step.
+
+### Use it
+
+- Slash: `/groktok` (or ask “what’s my usage?”)
+- The skill will ensure the `groktok` CLI is installed, then run it and summarize
+
+Install the CLI as well (skill alone does not put `groktok` on your PATH):
+
+```bash
+uv tool install "git+https://github.com/danecwalker/groktok.git"
+```
+
 ## Auth
 
 Preferred: sign in with the official Grok CLI (stores a session in `~/.grok/auth.json`):
