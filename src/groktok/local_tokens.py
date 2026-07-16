@@ -321,7 +321,12 @@ def parse_since_arg(raw: str, *, now: Optional[datetime] = None) -> datetime:
     if text in ("today", "midnight", "this morning", "morning"):
         local = now.replace(hour=0, minute=0, second=0, microsecond=0)
         return local.astimezone(timezone.utc)
-    if text in ("yesterday",):
+    if text in (
+        "yesterday",
+        "yesterday morning",
+        "yesterday midnight",
+        "last night",  # treat as prior local midnight (start of yesterday)
+    ):
         local = (now - timedelta(days=1)).replace(
             hour=0, minute=0, second=0, microsecond=0
         )
@@ -351,8 +356,8 @@ def parse_since_arg(raw: str, *, now: Optional[datetime] = None) -> datetime:
             continue
 
     raise ValueError(
-        f"Could not parse --since {raw!r}. Try: morning, today, 2026-07-16, "
-        f"2026-07-16T09:00, -6h"
+        f"Could not parse --since {raw!r}. Try: morning, yesterday, "
+        f"yesterday morning, today, -6h, 2026-07-16T09:00"
     )
 
 

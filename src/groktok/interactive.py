@@ -62,7 +62,12 @@ def _parse_user_datetime(raw: str, *, now: Optional[datetime] = None) -> datetim
         local = now.replace(hour=0, minute=0, second=0, microsecond=0)
         return local.astimezone(timezone.utc)
 
-    if text in ("yesterday",):
+    if text in (
+        "yesterday",
+        "yesterday morning",
+        "yesterday midnight",
+        "last night",
+    ):
         local = (now - timedelta(days=1)).replace(
             hour=0, minute=0, second=0, microsecond=0
         )
@@ -162,17 +167,21 @@ def run_interactive(
         "  [1] API week start"
         + (f"  ({_fmt_dt(api_start)})" if api_start else "  (unavailable)")
     )
-    print("  [2] Today at local midnight (this morning)")
+    print("  [2] This morning  (today at local midnight)")
+    print("  [3] Yesterday morning  (yesterday at local midnight)")
     print(
-        "  [3] Saved override"
+        "  [4] Saved override"
         + (
             f"  ({_fmt_dt(cfg.week_start_dt())})"
             if cfg.week_start_override
             else "  (none)"
         )
     )
-    print("  [4] Enter date/time  (today, morning, 2026-07-16 9am, -6h, …)")
-    print("  [5] Clear saved overrides and use API")
+    print(
+        "  [5] Type a relative time  "
+        "(morning, yesterday, -6h, … — no calendar date needed)"
+    )
+    print("  [6] Clear saved overrides and use API")
     # Default to this morning when API still shows high usage — common reset lag.
     default_choice = "2" if (api_pct is not None and api_pct >= 5) else (
         "1" if api_start else "2"
@@ -184,7 +193,7 @@ def run_interactive(
     period_label = "subscription week"
     source = "interactive"
 
-    if choice == "5":
+    if choice == "6":
         clear_config()
         cfg = GroktokConfig()
         print(style.dim("  Cleared saved overrides."))
@@ -200,18 +209,22 @@ def run_interactive(
         until = None
         period_label = "since local midnight (this morning)"
     elif choice == "3":
+        since = _parse_user_datetime("yesterday")
+        until = None
+        period_label = "since yesterday morning"
+    elif choice == "4":
         if not cfg.week_start_override:
-            print("  No saved week start — enter one.")
-            choice = "4"
+            print("  No saved week start — pick a relative time.")
+            choice = "5"
         else:
             since = cfg.week_start_dt()
             until = cfg.week_end_dt()
             period_label = "saved override"
             source = "saved"
-    if choice == "4":
+    if choice == "5":
         raw = _prompt(
-            "Week start (e.g. morning, today, 2026-07-16 8:00, -12h)",
-            "morning",
+            "Week start (morning, yesterday, yesterday morning, -12h, …)",
+            "yesterday morning",
         )
         since = _parse_user_datetime(raw)
         period_label = f"since {_fmt_dt(since)}"

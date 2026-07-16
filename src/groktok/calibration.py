@@ -157,11 +157,16 @@ def estimate_from_calibration(
     # When invert was build share B and overall was P: overall ≈ build_% × P/B
     inv = float(cal.invert_percent) if cal.invert_percent > 0 else 0.0
     overall_at = float(cal.overall_percent_at_cal or 0.0)
-    if inv > 0 and overall_at > 0:
-        overall_pct = build_pct * (overall_at / inv)
+    # After an early reset we may have zeroed overall_at_cal while keeping
+    # invert_percent as Build's pool share (e.g. 72). Still scale overall.
+    mix_overall = overall_at if overall_at > 0 else (
+        100.0 if inv > 0 and cal.invert_basis == "build_product" else 0.0
+    )
+    if inv > 0 and mix_overall > 0:
+        overall_pct = build_pct * (mix_overall / inv)
         notes.append(
             f"Overall % assumes constant mix "
-            f"(× {overall_at:.1f}/{inv:.1f} from calibration)."
+            f"(× {mix_overall:.1f}/{inv:.1f} from calibration)."
         )
     else:
         # Capacity was inverted on overall pool — build tokens ≈ whole pool
@@ -203,19 +208,36 @@ def should_recalibrate(
     *,
     force: bool = False,
     api_overall: Optional[float] = None,
+    api_week_start: Optional[datetime] = None,
 ) -> bool:
     """Decide whether to replace the saved calibration."""
     if candidate is None:
         return False
-    if force or existing is None:
+    if force:
+        return True
+    if existing is None:
         return True
 
-    # New week window (period start moved by > 1h)
+    # User-pinned anchors (early reset / -i / --recalibrate-window) stay put
+    # until they explicitly --recalibrate.
+    if existing.source in ("manual", "interactive"):
+        return False
+
     old_start = existing.week_start_dt()
     new_start = candidate.week_start_dt()
-    if old_start and new_start:
-        if abs((new_start - old_start).total_seconds()) > 3600:
-            return True
+
+    # If our saved week start is intentionally offset from the billing API
+    # period (common after early resets), do not auto-adopt API inversions.
+    if old_start and api_week_start:
+        if abs((old_start - api_week_start).total_seconds()) > 3600:
+            return False
+
+    # New subscription week window from API (period start moved by > 1h)
+    if old_start and new_start and api_week_start:
+        # Only treat as new week when the candidate tracks the API start
+        if abs((new_start - api_week_start).total_seconds()) < 3600:
+            if abs((new_start - old_start).total_seconds()) > 3600:
+                return True
 
     # Capacity shifted a lot while API still shows meaningful usage
     if existing.capacity_total > 0 and candidate.capacity_total > 0:
@@ -232,6 +254,7 @@ def should_recalibrate(
     # Refresh same-window calibration when tokens have grown and API % rose
     if (
         api_overall is not None
+        and existing.overall_percent_at_cal > 0
         and api_overall > existing.overall_percent_at_cal + 5
         and candidate.build_tokens_at_cal > existing.build_tokens_at_cal * 1.1
         and abs(candidate.capacity_total - existing.capacity_total)

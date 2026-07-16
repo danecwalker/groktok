@@ -43,7 +43,7 @@ You do **not** need to clone this repo. Install from GitHub (or a release tag) w
 uv tool install "git+https://github.com/danecwalker/groktok.git"
 
 # pin to a release tag
-uv tool install "git+https://github.com/danecwalker/groktok.git@v0.2.0"
+uv tool install "git+https://github.com/danecwalker/groktok.git@v0.2.1"
 ```
 
 Upgrade later:
@@ -65,7 +65,7 @@ uvx --from "git+https://github.com/danecwalker/groktok.git" groktok
 pip install "git+https://github.com/danecwalker/groktok.git"
 
 # pin to a release tag
-pip install "git+https://github.com/danecwalker/groktok.git@v0.2.0"
+pip install "git+https://github.com/danecwalker/groktok.git@v0.2.1"
 ```
 
 Prefer a virtualenv for pip installs:
@@ -82,9 +82,9 @@ groktok
 Each tagged release builds **sdist** and **wheel** packages. Download them from the [Releases](https://github.com/danecwalker/groktok/releases) page, then:
 
 ```bash
-pip install groktok-0.2.0-py3-none-any.whl
+pip install groktok-0.2.1-py3-none-any.whl
 # or
-uv pip install groktok-0.2.0-py3-none-any.whl
+uv pip install groktok-0.2.1-py3-none-any.whl
 ```
 
 ### From a local clone (development)
@@ -245,7 +245,7 @@ Stdout is a single JSON object. Success envelope (`schema_version` **2**):
 ```json
 {
   "ok": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "schema_version": 2,
   "generated_at": "2026-07-17T12:00:00+00:00",
   "usage_source": "local_calibration",
@@ -295,7 +295,7 @@ Errors also print JSON on stdout (exit code still non-zero):
 ```json
 {
   "ok": false,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "schema_version": 2,
   "generated_at": "...",
   "error": { "code": "auth", "message": "..." }
@@ -411,8 +411,8 @@ If Chat/Imagine/etc. also used the pool, the estimate is rougher.
 2. Commit, then tag and push:
 
 ```bash
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.2.1
+git push origin v0.2.1
 ```
 
 3. GitHub Actions builds the sdist + wheel and attaches them to a GitHub Release.

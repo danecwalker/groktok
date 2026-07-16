@@ -95,7 +95,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--since",
         metavar="WHEN",
-        help="Override token start: morning, today, 2026-07-16, -6h, …",
+        help="Override token start: morning, yesterday, yesterday morning, -6h, …",
     )
     parser.add_argument(
         "--until",
@@ -355,11 +355,13 @@ def _manage_calibration(
             )
 
     force = bool(args.recalibrate)
+    api_week_start = report.weekly.period.start if report else None
     if should_recalibrate(
         cal if not args.ignore_saved else None,
         candidate,
         force=force,
         api_overall=api_pct,
+        api_week_start=api_week_start,
     ):
         cal = candidate
         if cal is not None and not args.ignore_saved:
