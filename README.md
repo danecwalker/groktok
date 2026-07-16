@@ -8,9 +8,27 @@ CLI for your **Grok subscription weekly usage** and **monthly usage**.
 
 It reads the same billing data that powers **Settings → Usage** on [grok.com](https://grok.com/?_s=usage) and Grok Build’s `/usage` command.
 
-<p align="center">
-  <img src="assets/screenshot.png" alt="groktok CLI screenshot" width="720">
-</p>
+```
+$ groktok
+
+Grok usage
+  account  you@example.com
+
+Weekly pool  (Weekly)
+  ███████████████████░░░░░░░░░  68.0% used
+  Jul 13, 2026 16:52 PDT  →  Jul 20, 2026 16:52 PDT
+  Resets in 3d 12h
+
+  By product
+    GrokBuild      ████████████████  68.0%
+
+  Extra usage credits  $9.38 remaining
+
+Monthly usage  (included allotment)
+  ██████████████████████░░░░░░  $139.05 / $180.00  (77.3%)
+  Jul 01, 2026 00:00 UTC  →  Aug 01, 2026 00:00 UTC
+  Remaining            $40.95
+```
 
 ## Requirements
 
