@@ -290,11 +290,15 @@ def run_interactive(
     save = _prompt("Save these overrides for next time? [y/N]", "n").lower()
     saved = False
     if save in ("y", "yes"):
+        # Preserve plan price + any existing calibration; main() may refresh cal.
+        prev = load_config()
         new_cfg = GroktokConfig(
             week_start_override=since.isoformat() if since else None,
             week_end_override=until.isoformat() if until else None,
             pool_percent_override=pool_percent,
             note=period_label,
+            plan_price_usd=prev.plan_price_usd,
+            calibration=prev.calibration,
         )
         path = save_config(new_cfg)
         print(style.dim(f"  Saved to {path}"))

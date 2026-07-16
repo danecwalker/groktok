@@ -43,7 +43,7 @@ You do **not** need to clone this repo. Install from GitHub (or a release tag) w
 uv tool install "git+https://github.com/danecwalker/groktok.git"
 
 # pin to a release tag
-uv tool install "git+https://github.com/danecwalker/groktok.git@v0.1.0"
+uv tool install "git+https://github.com/danecwalker/groktok.git@v0.2.0"
 ```
 
 Upgrade later:
@@ -65,7 +65,7 @@ uvx --from "git+https://github.com/danecwalker/groktok.git" groktok
 pip install "git+https://github.com/danecwalker/groktok.git"
 
 # pin to a release tag
-pip install "git+https://github.com/danecwalker/groktok.git@v0.1.0"
+pip install "git+https://github.com/danecwalker/groktok.git@v0.2.0"
 ```
 
 Prefer a virtualenv for pip installs:
@@ -82,9 +82,9 @@ groktok
 Each tagged release builds **sdist** and **wheel** packages. Download them from the [Releases](https://github.com/danecwalker/groktok/releases) page, then:
 
 ```bash
-pip install groktok-0.1.0-py3-none-any.whl
+pip install groktok-0.2.0-py3-none-any.whl
 # or
-uv pip install groktok-0.1.0-py3-none-any.whl
+uv pip install groktok-0.2.0-py3-none-any.whl
 ```
 
 ### From a local clone (development)
@@ -169,17 +169,146 @@ Consumer weekly usage requires a **Grok/xAI session** (from `grok login`). A pla
 ## Usage
 
 ```bash
-groktok                    # weekly + monthly + local Build tokens
+groktok                    # weekly + monthly + local tokens + SuperGrok economics
 groktok -i                 # interactive: fix week start / pool % after a reset
-groktok --since morning --pool-percent 0   # non-interactive override
+groktok --since morning --pool-percent 0 --recalibrate-window
 groktok --weekly
 groktok --monthly
 groktok --tokens
 groktok --tokens --period all
 groktok --period week|7d|today|morning|month|all
+groktok --plan-price 30    # save monthly plan fee for amortized $/MTok
+groktok --recalibrate      # re-anchor capacity from API % + local tokens
+groktok --usage-source local|api|auto
+groktok --clear-calibration
 groktok --clear-overrides  # drop ~/.grok/groktok.json
-groktok --json
+groktok --json             # machine-readable (tools/scripts)
+groktok --format json      # same as --json
 ```
+
+### Local-first pool usage (less dependent on laggy billing API)
+
+Billing `creditUsagePercent` can lag after early / mid-week resets. `groktok`
+**calibrates** full-week capacity once, then tracks usage from **local Build
+tokens**:
+
+```text
+capacity ≈ local_build_tokens / (build_pool_% / 100)     # at calibration time
+live_%   ≈ 100 × tokens_since_week_start / capacity      # thereafter
+```
+
+Calibration is stored in `~/.grok/groktok.json`. Re-anchor when the real pool
+changes size, or after you trust a new API/% reading:
+
+```bash
+groktok --recalibrate
+groktok --pool-percent 40 --recalibrate   # if you trust UI % more than API
+```
+
+After an early fleet reset (UI at 0%, API still 100%):
+
+```bash
+groktok --since morning --pool-percent 0 --recalibrate-window --weekly
+# keeps capacity; moves week start; live % climbs from local tokens only
+```
+
+Default `--usage-source auto` prefers the local estimate when calibrated, and
+still shows the billing API % as a secondary line when they disagree.
+
+### SuperGrok economics ($/MTok)
+
+Alongside API list-price cost, `groktok` derives:
+
+| Rate | Meaning |
+|---|---|
+| **SuperGrok allotment** | `(monthly used $ × Build share) / Build tokens` |
+| **Plan amortized** | `plan_price_usd / Build tokens` (set `--plan-price`) |
+| **API list-equivalent** | xAI pay-as-you-go rates on the same tokens |
+
+Allotment $ is the **included monthly compute budget**, not your card charge.
+Build share comes from the billing product mix when available (else calibration /
+assume all Build).
+
+### Machine-readable JSON (for tools)
+
+Use `--json` or `--format json` when another process needs to parse usage:
+
+```bash
+groktok --json
+groktok --json --weekly
+groktok --json --tokens --period today
+groktok --json --monthly
+```
+
+Stdout is a single JSON object. Success envelope (`schema_version` **2**):
+
+```json
+{
+  "ok": true,
+  "version": "0.2.0",
+  "schema_version": 2,
+  "generated_at": "2026-07-17T12:00:00+00:00",
+  "usage_source": "local_calibration",
+  "effective_pool_percent": 68.0,
+  "account": { "email": "...", "user_id": "...", "team_id": "...", "auth_source": "..." },
+  "weekly": {
+    "usage_percent": 68.0,
+    "start": "...",
+    "end": "...",
+    "resets_in_seconds": 123456,
+    "product_usage": [{ "product": "GrokBuild", "usage_percent": 68.0 }],
+    "extra_usage_credits_usd": 9.38,
+    "build_tokens": { "...": "local token window + api_cost when present" },
+    "token_pool_estimate": { "...": "optional pool capacity proxy" }
+  },
+  "monthly": {
+    "used_usd": 139.05,
+    "limit_usd": 180.0,
+    "usage_percent": 77.25
+  },
+  "local_tokens": {
+    "period_label": "subscription week",
+    "totals": { "total_tokens": 0, "input_tokens": 0, "output_tokens": 0 },
+    "api_cost": { "total_usd": 0.0 }
+  },
+  "calibration": {
+    "capacity_total": 1000000000,
+    "invert_percent": 72.0,
+    "source": "api"
+  },
+  "local_pool_estimate": {
+    "build_pool_percent": 50.0,
+    "estimated_overall_percent": 68.0
+  },
+  "supergrok_economics": {
+    "rates_usd_per_mtok": {
+      "supergrok_allotment": 0.17,
+      "plan_amortized": null,
+      "api_list_equivalent": 0.58
+    }
+  }
+}
+```
+
+Errors also print JSON on stdout (exit code still non-zero):
+
+```json
+{
+  "ok": false,
+  "version": "0.2.0",
+  "schema_version": 2,
+  "generated_at": "...",
+  "error": { "code": "auth", "message": "..." }
+}
+```
+
+| `error.code` | Exit | Meaning |
+|---|---|---|
+| `auth` | `2` | Missing/invalid credentials |
+| `billing` | `1` | Billing API / network failure |
+| `usage` | `2` | Bad flags / parse error |
+
+`schema_version` is bumped only for breaking shape changes. Soft warnings (e.g. auth missing when falling back to `--tokens`-style local data) still go to **stderr** so they do not corrupt the JSON document.
 
 ### When the week “resets” but the API is stale
 
@@ -193,10 +322,10 @@ groktok -i
 # optionally save for next runs
 ```
 
-Or one-shot:
+Or one-shot (keeps calibrated capacity, moves the window):
 
 ```bash
-groktok --since morning --pool-percent 0 --weekly
+groktok --since morning --pool-percent 0 --recalibrate-window --weekly
 ```
 
 ## What the numbers mean
@@ -282,8 +411,8 @@ If Chat/Imagine/etc. also used the pool, the estimate is rougher.
 2. Commit, then tag and push:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 3. GitHub Actions builds the sdist + wheel and attaches them to a GitHub Release.

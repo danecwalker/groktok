@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from typing import Any, Optional, TextIO
 
 from .billing import MonthlyUsage, UsageReport, WeeklyUsage
+from .calibration import LocalPoolEstimate
+from .economics import SuperGrokEconomics
 from .estimate import estimate_weekly_tokens
 from .local_tokens import LocalTokenReport
 from .pricing import CostReport, analyze_cost, format_usd
@@ -320,6 +322,110 @@ def render_cost_analysis(
         )
 
 
+def render_economics(
+    eco: SuperGrokEconomics,
+    *,
+    style: Optional[Style] = None,
+    indent: str = "  ",
+    stream: Optional[TextIO] = None,
+) -> None:
+    """SuperGrok allotment / plan / API-equivalent rates."""
+    stream = stream or sys.stdout
+    style = style or Style(_use_color(stream))
+
+    def line(text: str = "") -> None:
+        print(text, file=stream)
+
+    line(style.bold(f"{indent}SuperGrok economics"))
+    line(
+        style.dim(
+            f"{indent}  (derived; allotment $ ≠ card charge; API $ = list price)"
+        )
+    )
+    if eco.capacity_total is not None:
+        line(
+            f"{indent}  Capacity (calibrated)  "
+            f"{style.cyan(_fmt_tokens(eco.capacity_total))}  "
+            f"({eco.capacity_total:,}) tokens"
+        )
+    if eco.build_pool_percent is not None:
+        line(
+            f"{indent}  Build pool used       "
+            f"{style.level(eco.build_pool_percent, f'{eco.build_pool_percent:.1f}%')}  "
+            f"(local tokens ÷ capacity)"
+        )
+    if eco.usage_percent is not None:
+        src = eco.usage_source.replace("_", " ")
+        line(
+            f"{indent}  Overall pool used     "
+            f"{style.level(eco.usage_percent, f'{eco.usage_percent:.1f}%')}  "
+            f"({src})"
+        )
+    if (
+        eco.api_overall_percent is not None
+        and eco.usage_source != "api"
+        and abs((eco.usage_percent or 0) - eco.api_overall_percent) > 0.5
+    ):
+        line(
+            style.dim(
+                f"{indent}  Billing API says      {eco.api_overall_percent:.1f}%  "
+                f"(may be stale)"
+            )
+        )
+    if eco.remaining_tokens is not None:
+        line(
+            f"{indent}  Remaining ≈           "
+            f"{_fmt_tokens(eco.remaining_tokens)} tokens"
+        )
+
+    line()
+    line(style.dim(f"{indent}  USD per 1M tokens (this window)"))
+    if eco.allotment_usd_per_mtok is not None:
+        attr = (
+            f"  from {format_usd(eco.attributed_allotment_usd or 0)} "
+            f"allotment × build share"
+            if eco.attributed_allotment_usd is not None
+            else ""
+        )
+        line(
+            f"{indent}    SuperGrok allotment "
+            f"{style.cyan(f'${eco.allotment_usd_per_mtok:.4f}/MTok')}{attr}"
+        )
+    else:
+        line(
+            style.dim(
+                f"{indent}    SuperGrok allotment —  "
+                f"(need monthly usage + local tokens)"
+            )
+        )
+    if eco.plan_usd_per_mtok is not None:
+        line(
+            f"{indent}    Plan amortized      "
+            f"{style.cyan(f'${eco.plan_usd_per_mtok:.4f}/MTok')}  "
+            f"(plan {format_usd(eco.plan_price_usd or 0)})"
+        )
+    else:
+        line(
+            style.dim(
+                f"{indent}    Plan amortized      —  "
+                f"(set with --plan-price USD)"
+            )
+        )
+    if eco.api_equiv_usd_per_mtok is not None:
+        line(
+            f"{indent}    API list-equivalent "
+            f"${eco.api_equiv_usd_per_mtok:.4f}/MTok  "
+            f"({format_usd(eco.api_equiv_total_usd or 0)} total)"
+        )
+    if eco.build_share_fraction is not None:
+        line(
+            style.dim(
+                f"{indent}  Build share {eco.build_share_fraction:.0%} "
+                f"({(eco.build_share_source or '').replace('_', ' ')})"
+            )
+        )
+
+
 def render_local_tokens(
     local: LocalTokenReport,
     *,
@@ -328,6 +434,7 @@ def render_local_tokens(
     show_cost: bool = True,
     long_context: Optional[bool] = None,
     pool_percent: Optional[float] = None,
+    economics: Optional[SuperGrokEconomics] = None,
     stream: Optional[TextIO] = None,
 ) -> None:
     stream = stream or sys.stdout
@@ -348,6 +455,9 @@ def render_local_tokens(
     )
     line()
     _render_token_stats(local, style, line, show_top=show_top)
+    if economics is not None:
+        line()
+        render_economics(economics, style=style, indent="  ", stream=stream)
     if show_cost:
         cost = analyze_cost(
             local, long_context=long_context, pool_percent_used=pool_percent
@@ -364,6 +474,10 @@ def render_text(
     local: Optional[LocalTokenReport] = None,
     local_period_label: str = "",
     pool_percent_override: Optional[float] = None,
+    effective_pool_percent: Optional[float] = None,
+    usage_source: str = "api",
+    local_estimate: Optional[LocalPoolEstimate] = None,
+    economics: Optional[SuperGrokEconomics] = None,
     show_cost: bool = True,
     long_context: Optional[bool] = None,
     show_history: bool = False,
@@ -391,21 +505,42 @@ def render_text(
     if show_weekly and report is not None:
         weekly = report.weekly
         api_pct = weekly.credit_usage_percent
-        w_pct = (
-            float(pool_percent_override)
-            if pool_percent_override is not None
-            else api_pct
-        )
+        if effective_pool_percent is not None:
+            w_pct = float(effective_pool_percent)
+        elif pool_percent_override is not None:
+            w_pct = float(pool_percent_override)
+        else:
+            w_pct = api_pct
         period_label = _period_type_label(weekly.period.type)
+        src_label = {
+            "local_calibration": "local tokens",
+            "override": "override",
+            "api": "billing API",
+            "none": "unknown",
+        }.get(usage_source, usage_source)
+
         line(style.bold(f"Weekly pool  ({period_label})"))
         bar = style.level(w_pct, _bar(w_pct, bar_width))
         pct_txt = style.level(w_pct, f"{w_pct:.1f}% used")
-        if pool_percent_override is not None and abs(w_pct - api_pct) > 0.05:
+        if usage_source == "local_calibration":
+            pct_txt = style.level(
+                w_pct, f"{w_pct:.1f}% used  (local-first · {src_label})"
+            )
+        elif usage_source == "override" and abs(w_pct - api_pct) > 0.05:
             pct_txt = style.level(
                 w_pct,
                 f"{w_pct:.1f}% used  (override; API says {api_pct:.1f}%)",
             )
         line(f"  {bar}  {pct_txt}")
+        if (
+            usage_source == "local_calibration"
+            and abs(w_pct - api_pct) > 0.5
+        ):
+            line(
+                style.dim(
+                    f"  Billing API          {api_pct:.1f}% used  (may be delayed)"
+                )
+            )
         line(
             f"  API window   {_fmt_dt(weekly.period.start)}  →  "
             f"{_fmt_dt(weekly.period.end)}"
@@ -425,7 +560,7 @@ def render_text(
 
         if weekly.product_usage:
             line()
-            line(style.dim("  By product"))
+            line(style.dim("  By product  (billing API)"))
             for p in sorted(weekly.product_usage, key=lambda x: -x.usage_percent):
                 pbar = style.level(p.usage_percent, _bar(p.usage_percent, 16))
                 line(f"    {p.product:<14} {pbar}  {p.usage_percent:.1f}%")
@@ -450,7 +585,11 @@ def render_text(
             est = estimate_weekly_tokens(
                 weekly,
                 local,
-                usage_percent_override=pool_percent_override,
+                usage_percent_override=(
+                    pool_percent_override
+                    if pool_percent_override is not None
+                    else (w_pct if usage_source != "api" else None)
+                ),
             )
             line()
             line(style.dim("  Build tokens this week  (local, since pool start)"))
@@ -478,17 +617,45 @@ def render_text(
 
             line()
             line(style.bold("  Estimated full-week token pool"))
-            line(
-                style.dim(
-                    f"    method: local tokens ÷ {est.invert_percent:.1f}% "
-                    f"({est.invert_basis.replace('_', ' ')})  ·  "
-                    f"confidence: {est.confidence}"
+            if local_estimate is not None:
+                cap = local_estimate.capacity_total
+                rem = local_estimate.remaining_overall_tokens
+                line(
+                    style.dim(
+                        f"    method: calibrated capacity  ·  "
+                        f"confidence: {local_estimate.confidence}  ·  "
+                        f"live from local tokens"
+                    )
                 )
-            )
-            if est.estimated_capacity_total is not None:
+                line(
+                    f"    Full week ≈        "
+                    f"{style.cyan(_fmt_tokens(cap))}  ({cap:,}) tokens"
+                )
+                line(
+                    f"    Build footprint    "
+                    f"{local_estimate.build_pool_percent:.1f}% of capacity  "
+                    f"({_fmt_tokens(t.total_tokens)} tokens)"
+                )
+                line(
+                    f"    Overall used ≈     "
+                    f"{w_pct:.1f}%  →  remaining ≈ "
+                    f"{style.level(w_pct, _fmt_tokens(rem))}"
+                )
+                line(
+                    f"    {_bar(w_pct, bar_width)}  "
+                    f"{style.level(w_pct, f'{w_pct:.0f}% of ~{_fmt_tokens(cap)}')}"
+                )
+            elif est.estimated_capacity_total is not None:
                 cap = est.estimated_capacity_total
                 rem = est.estimated_remaining_total or 0
                 used_equiv = est.estimated_used_via_percent
+                line(
+                    style.dim(
+                        f"    method: local tokens ÷ {est.invert_percent:.1f}% "
+                        f"({est.invert_basis.replace('_', ' ')})  ·  "
+                        f"confidence: {est.confidence}"
+                    )
+                )
                 line(
                     f"    Full week ≈        "
                     f"{style.cyan(_fmt_tokens(cap))}  ({cap:,}) tokens"
@@ -503,8 +670,6 @@ def render_text(
                     f"{style.level(w_pct, _fmt_tokens(rem))}  "
                     f"({max(0.0, 100.0 - w_pct):.1f}% left)"
                 )
-                # Mini bar for remaining vs full
-                left_pct = max(0.0, 100.0 - w_pct)
                 line(
                     f"    {_bar(w_pct, bar_width)}  "
                     f"{style.level(w_pct, f'{w_pct:.0f}% of ~{_fmt_tokens(cap)}')}"
@@ -512,7 +677,7 @@ def render_text(
             else:
                 line(style.dim("    (not enough data to invert pool size yet)"))
 
-            if est.estimated_capacity_uncached is not None:
+            if est.estimated_capacity_uncached is not None and local_estimate is None:
                 line(
                     style.dim(
                         f"    Uncached-input basis: full week ≈ "
@@ -522,9 +687,14 @@ def render_text(
                     )
                 )
 
-            if est.notes:
-                # Show the most important note only in text UI
+            if local_estimate and local_estimate.notes:
+                line(style.dim(f"    note: {local_estimate.notes[0]}"))
+            elif est.notes:
                 line(style.dim(f"    note: {est.notes[0]}"))
+
+            if economics is not None:
+                line()
+                render_economics(economics, style=style, indent="  ", stream=stream)
 
             if show_cost:
                 cost = analyze_cost(
