@@ -73,13 +73,17 @@ def _parse_user_datetime(raw: str, *, now: Optional[datetime] = None) -> datetim
         )
         return local.astimezone(timezone.utc)
 
-    m = re.fullmatch(r"-(\d+)\s*h(ours?)?", text)
+    m = re.fullmatch(r"-?(\d+)\s*h(ours?)?", text)
     if m:
         return (now - timedelta(hours=int(m.group(1)))).astimezone(timezone.utc)
 
-    m = re.fullmatch(r"-(\d+)\s*d(ays?)?", text)
+    m = re.fullmatch(r"-?(\d+)\s*d(ays?)?", text)
     if m:
         return (now - timedelta(days=int(m.group(1)))).astimezone(timezone.utc)
+
+    m = re.fullmatch(r"-?(\d+)\s*m(in(ute)?s?)?", text)
+    if m:
+        return (now - timedelta(minutes=int(m.group(1)))).astimezone(timezone.utc)
 
     # 9am / 9:30am / 14:00 today
     m = re.fullmatch(r"(\d{1,2})(?::(\d{2}))?\s*(am|pm)?", text)

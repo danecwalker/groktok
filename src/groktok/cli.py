@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from typing import Any, Optional, Sequence, Tuple
@@ -39,6 +40,54 @@ from .pricing import analyze_cost
 
 # Bump when the machine-readable JSON shape changes incompatibly.
 JSON_SCHEMA_VERSION = 2
+
+# Options whose values often look like flags (e.g. --since -27h).
+_VALUE_OPTS_NEEDING_NEGATIVE = frozenset(
+    {
+        "--since",
+        "--until",
+        "--pool-percent",
+        "--plan-price",
+        "--top",
+        "--period",
+    }
+)
+
+
+def _normalize_argv(argv: Sequence[str]) -> list[str]:
+    """
+    Make ``--since -27h`` work.
+
+    argparse treats a following token that starts with ``-`` as a new option,
+    so bare ``-27h`` is rejected. Rewrite to ``--since=-27h`` (and same for
+    a few other value-taking flags).
+    """
+    out: list[str] = []
+    i = 0
+    items = list(argv)
+    # Values that look like options but are meant as data for --since/etc.
+    sticky_val = re.compile(
+        r"^("
+        r"-\d+"  # -27, -0.5
+        r"|-?\d+\s*[hdm](ours?|ays?|in(ute)?s?)?"  # -27h, 27h, -1d
+        r")$",
+        re.IGNORECASE,
+    )
+    while i < len(items):
+        tok = items[i]
+        if tok in _VALUE_OPTS_NEEDING_NEGATIVE and i + 1 < len(items):
+            nxt = items[i + 1]
+            if sticky_val.match(nxt.strip()) or (
+                nxt.startswith("-")
+                and not nxt.startswith("--")
+                and nxt not in ("-h", "-V", "-i")
+            ):
+                out.append(f"{tok}={nxt}")
+                i += 2
+                continue
+        out.append(tok)
+        i += 1
+    return out
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -95,7 +144,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--since",
         metavar="WHEN",
-        help="Override token start: morning, yesterday, yesterday morning, -6h, …",
+        help=(
+            "Override token start: morning, yesterday, 27h, -27h, … "
+            "(relative: --since -27h or --since=27h)"
+        ),
     )
     parser.add_argument(
         "--until",
@@ -478,7 +530,8 @@ def _build_json_payload(
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(list(argv) if argv is not None else None)
+    raw = list(argv) if argv is not None else sys.argv[1:]
+    args = parser.parse_args(_normalize_argv(raw))
     as_json = _want_json(args)
 
     if args.clear_overrides:

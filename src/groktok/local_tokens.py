@@ -334,12 +334,17 @@ def parse_since_arg(raw: str, *, now: Optional[datetime] = None) -> datetime:
 
     import re
 
-    m = re.fullmatch(r"-(\d+)\s*h(ours?)?", text)
+    # Relative lookback: -27h, 27h, 27 hours, -1d, 1d, 90m, …
+    # (Leading '-' is optional; argparse also accepts --since=-27h.)
+    m = re.fullmatch(r"-?(\d+)\s*h(ours?)?", text)
     if m:
         return (now - timedelta(hours=int(m.group(1)))).astimezone(timezone.utc)
-    m = re.fullmatch(r"-(\d+)\s*d(ays?)?", text)
+    m = re.fullmatch(r"-?(\d+)\s*d(ays?)?", text)
     if m:
         return (now - timedelta(days=int(m.group(1)))).astimezone(timezone.utc)
+    m = re.fullmatch(r"-?(\d+)\s*m(in(ute)?s?)?", text)
+    if m:
+        return (now - timedelta(minutes=int(m.group(1)))).astimezone(timezone.utc)
 
     candidates = [raw.strip()]
     if " " in raw.strip() and "T" not in raw:
@@ -357,7 +362,7 @@ def parse_since_arg(raw: str, *, now: Optional[datetime] = None) -> datetime:
 
     raise ValueError(
         f"Could not parse --since {raw!r}. Try: morning, yesterday, "
-        f"yesterday morning, today, -6h, 2026-07-16T09:00"
+        f"yesterday morning, today, 27h, -6h, 2026-07-16T09:00"
     )
 
 
