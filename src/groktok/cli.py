@@ -749,9 +749,23 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if week_like and (prefer_local or args.usage_source == "local")
         else None
     )
+
+    # --pool-percent 0 with --recalibrate-window means "empty at week start",
+    # not "currently 0% for this run". After tokens have accumulated, live %
+    # must come from local capacity math. Same if a sticky override is 0 but
+    # we already have tokens in the calibrated window.
+    live_override = pool_percent_override
+    if live_override is not None and live_override <= 0:
+        if args.recalibrate_window or (
+            use_local_est is not None
+            and local is not None
+            and local.total.total_tokens > 0
+        ):
+            live_override = None
+
     effective_pct, usage_source = resolve_effective_pool_percent(
         api_percent=api_pct,
-        override_percent=pool_percent_override,
+        override_percent=live_override,
         local_estimate=use_local_est,
         prefer_local=prefer_local and week_like,
     )
@@ -763,6 +777,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         and week_like
     ):
         effective_pct = local_estimate.estimated_overall_percent
+        usage_source = "local_calibration"
+
+    # Never show a full-bar API 100% as truth when we have a manual early-reset
+    # calibration and local estimate that disagrees strongly.
+    if (
+        prefer_local
+        and week_like
+        and use_local_est is not None
+        and calibration is not None
+        and calibration.source in ("manual", "interactive")
+        and usage_source == "api"
+        and api_pct is not None
+        and abs(use_local_est.estimated_overall_percent - api_pct) > 15
+    ):
+        effective_pct = use_local_est.estimated_overall_percent
         usage_source = "local_calibration"
 
     economics = None

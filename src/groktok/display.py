@@ -619,7 +619,12 @@ def render_text(
             line(style.bold("  Estimated full-week token pool"))
             if local_estimate is not None:
                 cap = local_estimate.capacity_total
-                rem = local_estimate.remaining_overall_tokens
+                # Remaining must match the % we actually display (not a stale
+                # API/override figure mixed with local remaining).
+                rem = max(
+                    0,
+                    int(round(cap * max(0.0, (100.0 - w_pct) / 100.0))),
+                )
                 line(
                     style.dim(
                         f"    method: calibrated capacity  ·  "
@@ -636,10 +641,20 @@ def render_text(
                     f"{local_estimate.build_pool_percent:.1f}% of capacity  "
                     f"({_fmt_tokens(t.total_tokens)} tokens)"
                 )
+                if abs(local_estimate.estimated_overall_percent - w_pct) > 1.0:
+                    line(
+                        style.dim(
+                            f"    Local estimate     "
+                            f"{local_estimate.estimated_overall_percent:.1f}% overall "
+                            f"({local_estimate.build_pool_percent:.1f}% build)  ·  "
+                            f"display uses {usage_source.replace('_', ' ')}"
+                        )
+                    )
                 line(
                     f"    Overall used ≈     "
                     f"{w_pct:.1f}%  →  remaining ≈ "
-                    f"{style.level(w_pct, _fmt_tokens(rem))}"
+                    f"{style.level(w_pct, _fmt_tokens(rem))}  "
+                    f"({max(0.0, 100.0 - w_pct):.1f}% left)"
                 )
                 line(
                     f"    {_bar(w_pct, bar_width)}  "
