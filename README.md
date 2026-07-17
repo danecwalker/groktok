@@ -92,26 +92,36 @@ groktok --weekly     # weekly pool + local tokens
 groktok --monthly    # monthly allotment only
 groktok --history    # include monthly history
 groktok --no-local   # skip local session token scan
-groktok --model grok-4.5   # local tokens for one model only
-groktok --zeros 1    # pool was wiped to 0% once during this week
-groktok --json       # machine-readable JSON
-groktok --format json
+groktok --model grok-4.5
+groktok --recalibrate --zeros 2 --model grok-4.5   # set/update token capacity
+groktok --json
 ```
 
-`--model` matches case-insensitively (exact, then prefix, then substring). Example: `--model 4.5` or `--model kimi`.
+### Token meter (local usage %, remembered)
 
-`--zeros N` is how many times the **weekly pool was reset to 0%** during the
-current billing window. With `--zeros`, **usage % is from local tokens**, not
-the billing API bar:
+**Calibrate once** (billing API + raw week tokens → capacity):
+
+```bash
+groktok --recalibrate --zeros 2 --model grok-4.5
+```
 
 ```text
-capacity ≈ week_tokens / (N + billing_%/100)   # estimated once, then saved
-usage_%  = 100 × (week_tokens / capacity − N)
+capacity ≈ week_tokens / (zeros + billing_%/100)   # saved to ~/.grok/groktok.json
 ```
 
-Billing % is only used as a one-shot anchor to estimate capacity (refresh with
-`--recalibrate`). After that the weekly bar is token-driven and can exceed 100%
-when you burn extra credits.
+**Later runs** need no special flags — usage comes from local tokens:
+
+```bash
+groktok
+# usage_% = 100 × (week_tokens / capacity − zeros)
+```
+
+- Billing API % is only used while **recalibrating** (invert anchor).
+- Day-to-day bar is **token meter** (can go past 100% on extra credits).
+- `--model` and `--zeros` are remembered from the last calibration for this week.
+- Re-run `--recalibrate` when the week resets or capacity looks wrong.
+
+`--model` matches case-insensitively (exact, then prefix, then substring).
 
 ### What the numbers mean
 

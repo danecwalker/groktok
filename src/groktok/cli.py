@@ -10,10 +10,11 @@ from typing import Any, Optional, Sequence
 
 from . import __version__
 from .auth import AuthError, load_credentials
-from .billing import BillingError, fetch_usage
+from .billing import BillingError, UsageReport, fetch_usage
 from .config import TokenMeterState, load_meter_state, save_meter_state
 from .display import render_text, report_to_dict
 from .local_tokens import (
+    LocalTokenReport,
     estimate_capacity_tokens,
     filter_report_by_model,
     scan_local_tokens,
@@ -27,16 +28,23 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="groktok",
         description=(
-            "Show your Grok subscription weekly usage pool, monthly "
+            "Show Grok weekly usage (token meter when calibrated), monthly "
             "allotment, and local Build tokens for the weekly window."
         ),
         epilog=(
             "Auth: ~/.grok/auth.json from `grok login`, or GROKTOK_TOKEN.\n"
             "Local tokens: ~/.grok/sessions (weekly billing window).\n"
-            "Model filter: --model grok-4.5  (exact / prefix / substring).\n"
-            "Mid-week resets: --zeros 1  (pool wiped to 0%% once this week).\n"
-            "With --zeros, weekly usage %% is computed from local tokens / capacity\n"
-            "(billing API %% is shown only as a secondary reference).\n"
+            "\n"
+            "Token meter (preferred weekly usage %%):\n"
+            "  1) Calibrate once:\n"
+            "       groktok --recalibrate [--zeros N] [--model NAME]\n"
+            "     Uses billing API %% + raw week tokens to estimate capacity,\n"
+            "     then saves it to ~/.grok/groktok.json.\n"
+            "  2) Later runs (no flags needed):\n"
+            "       groktok\n"
+            "     Usage %% = 100 × (week_tokens / capacity − zeros)\n"
+            "     from local tokens only (billing API is secondary).\n"
+            "\n"
             "Usage tab: https://grok.com/?_s=usage"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -64,14 +72,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--no-local",
         action="store_true",
-        help="Skip local session token scan",
+        help="Skip local session token scan (billing API only)",
     )
     parser.add_argument(
         "--model",
         metavar="NAME",
         help=(
-            "Only show local tokens for this model "
-            "(case-insensitive exact, prefix, or substring match)"
+            "Only count local tokens for this model "
+            "(case-insensitive exact, prefix, or substring). "
+            "Remembered when you recalibrate."
         ),
     )
     parser.add_argument(
@@ -80,17 +89,17 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="N",
         default=None,
         help=(
-            "Times the weekly pool was reset to 0%% during this billing window. "
-            "Usage %% = 100×(week_tokens/capacity − N); capacity is estimated "
-            "once and saved, or refreshed with --recalibrate"
+            "Times the weekly pool was reset to 0%% in this billing window "
+            "(completed full cycles). Defaults to saved value, else 0. "
+            "Pass with --recalibrate to set/update."
         ),
     )
     parser.add_argument(
         "--recalibrate",
         action="store_true",
         help=(
-            "Re-estimate token capacity from current week tokens + --zeros "
-            "(and billing %% as a one-shot invert anchor)"
+            "Re-estimate capacity from billing API %% + raw week tokens, "
+            "save it, and use the token meter for usage %%"
         ),
     )
     scope = parser.add_mutually_exclusive_group()
@@ -128,6 +137,45 @@ def _fail(*, as_json: bool, code: str, message: str, exit_code: int) -> int:
     return exit_code
 
 
+def _week_start_iso(report: UsageReport) -> str:
+    start = report.weekly.period.start
+    return start.isoformat() if start is not None else ""
+
+
+def _meter_matches_week(
+    saved: Optional[TokenMeterState],
+    *,
+    week_start_iso: str,
+    model_key: Optional[str],
+) -> bool:
+    if saved is None:
+        return False
+    if saved.week_start != week_start_iso:
+        return False
+    # If a model filter was saved, require the same filter (or auto-apply it).
+    if (saved.model_filter or None) != (model_key or None):
+        return False
+    return True
+
+
+def _apply_token_meter(
+    report: UsageReport,
+    local: LocalTokenReport,
+    *,
+    zeros: int,
+    capacity: int,
+    capacity_source: str,
+) -> LocalTokenReport:
+    billing_pct = float(report.weekly.credit_usage_percent or 0.0)
+    return with_zero_estimate(
+        local,
+        zeros=zeros,
+        capacity_tokens=capacity,
+        capacity_source=capacity_source,
+        billing_pool_percent=billing_pct,
+    )
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
@@ -156,17 +204,31 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             exit_code=2,
         )
 
-    # Local Build tokens for the billing weekly window [start, end).
-    local = None
+    saved = None if args.no_local else load_meter_state()
+    week_start_iso = _week_start_iso(report)
+
+    # Effective model filter: explicit flag, else remembered filter for this week.
+    model_key = args.model
+    if (
+        model_key is None
+        and saved is not None
+        and saved.week_start == week_start_iso
+        and saved.model_filter
+        and not args.no_local
+        and "weekly" in sections
+    ):
+        model_key = saved.model_filter
+
+    local: Optional[LocalTokenReport] = None
     if not args.no_local and "weekly" in sections:
         weekly = report.weekly
         local = scan_local_tokens(
             since=weekly.period.start,
             until=weekly.period.end,
         )
-        if args.model:
+        if model_key:
             try:
-                local = filter_report_by_model(local, args.model)
+                local = filter_report_by_model(local, model_key)
             except ValueError as exc:
                 return _fail(
                     as_json=as_json,
@@ -174,52 +236,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     message=str(exc),
                     exit_code=2,
                 )
-        if args.zeros is not None:
-            try:
-                week_start = weekly.period.start
-                week_start_iso = (
-                    week_start.isoformat() if week_start is not None else ""
-                )
-                billing_pct = float(weekly.credit_usage_percent or 0.0)
-                saved = load_meter_state()
-                model_key = args.model
-                can_reuse = (
-                    saved is not None
-                    and not args.recalibrate
-                    and saved.zeros == args.zeros
-                    and saved.week_start == week_start_iso
-                    and (saved.model_filter or None) == (model_key or None)
-                )
-                if can_reuse:
-                    capacity = saved.capacity_tokens
-                    cap_source = "saved"
-                else:
-                    capacity = estimate_capacity_tokens(
-                        local.total.total_tokens,
-                        zeros=args.zeros,
-                        billing_pool_percent=billing_pct,
-                    )
-                    save_meter_state(
-                        TokenMeterState(
-                            week_start=week_start_iso,
-                            capacity_tokens=capacity,
-                            zeros=args.zeros,
-                            model_filter=model_key,
-                        )
-                    )
-                    cap_source = "estimated"
-                    if not as_json:
-                        print(
-                            f"token capacity ≈ {capacity:,} / cycle "
-                            f"({cap_source}; zeros={args.zeros})",
-                            file=sys.stderr,
-                        )
 
-                local = with_zero_estimate(
-                    local,
-                    zeros=args.zeros,
-                    capacity_tokens=capacity,
-                    capacity_source=cap_source,
+        billing_pct = float(weekly.credit_usage_percent or 0.0)
+        zeros_for_save = (
+            args.zeros
+            if args.zeros is not None
+            else (saved.zeros if saved is not None else 0)
+        )
+
+        # Recalibrate: billing API % + raw week tokens → new capacity, then save.
+        if args.recalibrate:
+            z = args.zeros if args.zeros is not None else zeros_for_save
+            try:
+                capacity = estimate_capacity_tokens(
+                    local.total.total_tokens,
+                    zeros=z,
                     billing_pool_percent=billing_pct,
                 )
             except ValueError as exc:
@@ -229,6 +260,119 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     message=str(exc),
                     exit_code=2,
                 )
+            save_meter_state(
+                TokenMeterState(
+                    week_start=week_start_iso,
+                    capacity_tokens=capacity,
+                    zeros=z,
+                    model_filter=model_key,
+                )
+            )
+            if not as_json:
+                print(
+                    f"calibrated token capacity ≈ {capacity:,} / cycle "
+                    f"(zeros={z}; billing anchor {billing_pct:.1f}%)",
+                    file=sys.stderr,
+                )
+            local = _apply_token_meter(
+                report,
+                local,
+                zeros=z,
+                capacity=capacity,
+                capacity_source="estimated",
+            )
+        else:
+            # Normal path: reuse saved meter for this week (no --zeros required).
+            # Also allow first-time setup via --zeros alone (implies calibrate).
+            meter_ok = _meter_matches_week(
+                saved,
+                week_start_iso=week_start_iso,
+                model_key=model_key,
+            )
+            if meter_ok and saved is not None:
+                z = args.zeros if args.zeros is not None else saved.zeros
+                # If user changes zeros without --recalibrate, re-estimate capacity.
+                if args.zeros is not None and args.zeros != saved.zeros:
+                    try:
+                        capacity = estimate_capacity_tokens(
+                            local.total.total_tokens,
+                            zeros=args.zeros,
+                            billing_pool_percent=billing_pct,
+                        )
+                    except ValueError as exc:
+                        return _fail(
+                            as_json=as_json,
+                            code="usage",
+                            message=str(exc),
+                            exit_code=2,
+                        )
+                    save_meter_state(
+                        TokenMeterState(
+                            week_start=week_start_iso,
+                            capacity_tokens=capacity,
+                            zeros=args.zeros,
+                            model_filter=model_key,
+                        )
+                    )
+                    if not as_json:
+                        print(
+                            f"calibrated token capacity ≈ {capacity:,} / cycle "
+                            f"(zeros={args.zeros}; billing anchor {billing_pct:.1f}%)",
+                            file=sys.stderr,
+                        )
+                    local = _apply_token_meter(
+                        report,
+                        local,
+                        zeros=args.zeros,
+                        capacity=capacity,
+                        capacity_source="estimated",
+                    )
+                else:
+                    local = _apply_token_meter(
+                        report,
+                        local,
+                        zeros=z,
+                        capacity=saved.capacity_tokens,
+                        capacity_source="saved",
+                    )
+            elif args.zeros is not None:
+                # First calibrate without requiring --recalibrate flag.
+                try:
+                    capacity = estimate_capacity_tokens(
+                        local.total.total_tokens,
+                        zeros=args.zeros,
+                        billing_pool_percent=billing_pct,
+                    )
+                except ValueError as exc:
+                    return _fail(
+                        as_json=as_json,
+                        code="usage",
+                        message=str(exc),
+                        exit_code=2,
+                    )
+                save_meter_state(
+                    TokenMeterState(
+                        week_start=week_start_iso,
+                        capacity_tokens=capacity,
+                        zeros=args.zeros,
+                        model_filter=model_key,
+                    )
+                )
+                if not as_json:
+                    print(
+                        f"calibrated token capacity ≈ {capacity:,} / cycle "
+                        f"(zeros={args.zeros}; billing anchor {billing_pct:.1f}%)",
+                        file=sys.stderr,
+                    )
+                local = _apply_token_meter(
+                    report,
+                    local,
+                    zeros=args.zeros,
+                    capacity=capacity,
+                    capacity_source="estimated",
+                )
+            # else: no saved meter — show billing API bar + raw week tokens only
+
     elif args.model and args.no_local:
         return _fail(
             as_json=as_json,
@@ -243,28 +387,30 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             message="--zeros requires a local token scan (omit --no-local)",
             exit_code=2,
         )
-    elif args.recalibrate and args.zeros is None:
+    elif args.recalibrate and args.no_local:
         return _fail(
             as_json=as_json,
             code="usage",
-            message="--recalibrate requires --zeros N",
+            message="--recalibrate requires a local token scan (omit --no-local)",
             exit_code=2,
         )
-    elif (args.model or args.zeros is not None) and args.monthly and not args.weekly:
+    elif (
+        (args.model or args.zeros is not None or args.recalibrate)
+        and args.monthly
+        and not args.weekly
+    ):
         return _fail(
             as_json=as_json,
             code="usage",
             message=(
-                "--model / --zeros apply to local weekly tokens; "
+                "--model / --zeros / --recalibrate apply to weekly local tokens; "
                 "omit --monthly or use default/weekly view"
             ),
             exit_code=2,
         )
 
     if as_json:
-        payload = report_to_dict(
-            report, history=args.history, local=local
-        )
+        payload = report_to_dict(report, history=args.history, local=local)
         if args.weekly:
             payload.pop("monthly", None)
         elif args.monthly:

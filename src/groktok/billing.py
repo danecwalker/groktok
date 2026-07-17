@@ -13,7 +13,7 @@ from .auth import Credentials
 
 BILLING_URL = "https://cli-chat-proxy.grok.com/v1/billing"
 DEFAULT_TIMEOUT = 20
-CLIENT_VERSION = "0.3.4"
+CLIENT_VERSION = "0.3.5"
 
 
 class BillingError(RuntimeError):

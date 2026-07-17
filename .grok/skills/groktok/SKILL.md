@@ -64,9 +64,12 @@ groktok
 | Machine-readable | `groktok --json` |
 | Skip local token scan | `groktok --no-local` |
 | Local tokens for one model | `groktok --model grok-4.5` |
-| Mid-week pool zeroings (token usage bar) | `groktok --zeros 1` |
-| Re-estimate token capacity | `groktok --zeros 1 --recalibrate` |
+| Calibrate token capacity (billing + week tokens) | `groktok --recalibrate --zeros N [--model NAME]` |
+| Token-meter usage (after calibrate; no flags needed) | `groktok` |
 | Monthly history | `groktok --history` |
+
+After calibration, prefer reporting **token-meter** weekly %
+(`usage_percent_token_meter` / “token meter” bar) over billing API %.
 
 If only `uvx` is available, prefix the same args:
 

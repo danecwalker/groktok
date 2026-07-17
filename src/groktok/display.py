@@ -370,7 +370,7 @@ def render_text(
                     line(
                         style.dim(
                             f"    Billing API %      {z.billing_pool_percent:.1f}%  "
-                            f"(not used for usage bar when --zeros is set)"
+                            f"(not used for usage bar — token meter active)"
                         )
                     )
             line(style.dim(f"    {local.source_note}"))
