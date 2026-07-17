@@ -303,6 +303,35 @@ def render_text(
                         f"{_fmt_tokens(bucket.total_tokens):>10}  "
                         f"({bucket.turns} turns)"
                     )
+            if local.zero_estimate is not None:
+                z = local.zero_estimate
+                line()
+                line(
+                    style.dim(
+                        f"    Zero-cycles (--zeros {z.zeros})  "
+                        f"using live pool {z.pool_percent:.1f}%"
+                    )
+                )
+                line(
+                    f"    Cycles this week   "
+                    f"{z.cycles:.2f}  "
+                    f"({z.zeros} full + {z.pool_percent:.1f}% current)"
+                )
+                line(
+                    f"    Est. capacity/cycle"
+                    f"  {style.cyan(_fmt_tokens(z.capacity_tokens))}  "
+                    f"({z.capacity_tokens:,})"
+                )
+                line(
+                    f"    Completed cycles   "
+                    f"{_fmt_tokens(z.completed_cycle_tokens)}  "
+                    f"({z.completed_cycle_tokens:,}) tokens"
+                )
+                line(
+                    f"    Current cycle      "
+                    f"{style.cyan(_fmt_tokens(z.current_cycle_tokens))}  "
+                    f"({z.current_cycle_tokens:,}) tokens"
+                )
             line(style.dim(f"    {local.source_note}"))
 
         if "monthly" in sections:

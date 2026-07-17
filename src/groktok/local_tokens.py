@@ -71,6 +71,40 @@ class TokenBucket:
 
 
 @dataclass
+class ZeroCycleEstimate:
+    """
+    Interpret week tokens when the pool was zeroed mid-window.
+
+        cycles   = zeros + (pool_percent / 100)
+        capacity ≈ week_tokens / cycles
+        current  ≈ capacity × (pool_percent / 100)
+    """
+
+    zeros: int
+    pool_percent: float
+    week_tokens: int
+    cycles: float
+    capacity_tokens: int
+    current_cycle_tokens: int
+    completed_cycle_tokens: int
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "zeros": self.zeros,
+            "pool_percent": self.pool_percent,
+            "week_tokens": self.week_tokens,
+            "cycles": round(self.cycles, 4),
+            "capacity_tokens": self.capacity_tokens,
+            "current_cycle_tokens": self.current_cycle_tokens,
+            "completed_cycle_tokens": self.completed_cycle_tokens,
+            "method": (
+                "capacity = week_tokens / (zeros + pool_percent/100); "
+                "current_cycle_tokens = capacity * pool_percent/100"
+            ),
+        }
+
+
+@dataclass
 class LocalTokenReport:
     sessions_home: Path
     since: Optional[datetime]
@@ -81,6 +115,7 @@ class LocalTokenReport:
     by_model: dict[str, TokenBucket] = field(default_factory=dict)
     model_filter: Optional[str] = None
     matched_models: list[str] = field(default_factory=list)
+    zero_estimate: Optional[ZeroCycleEstimate] = None
     source_note: str = (
         "Local Grok Build sessions only (~/.grok/sessions). "
         "Does not include Chat/Imagine/Voice or other machines."
@@ -102,7 +137,77 @@ class LocalTokenReport:
         if self.model_filter is not None:
             payload["model_filter"] = self.model_filter
             payload["matched_models"] = list(self.matched_models)
+        if self.zero_estimate is not None:
+            payload["zero_cycles"] = self.zero_estimate.as_dict()
         return payload
+
+
+def estimate_zero_cycles(
+    week_tokens: int,
+    *,
+    zeros: int,
+    pool_percent: float,
+) -> ZeroCycleEstimate:
+    """
+    Derive per-cycle capacity from week tokens + mid-window zero count.
+
+    ``zeros`` = how many times the pool was wiped to 0% during this week
+    (completed full cycles no longer reflected in the live %).
+    """
+    if zeros < 0:
+        raise ValueError("--zeros must be >= 0")
+    if week_tokens <= 0:
+        raise ValueError("No local tokens in the weekly window to apply --zeros")
+
+    frac = max(0.0, float(pool_percent)) / 100.0
+    cycles = float(zeros) + frac
+    if cycles <= 0:
+        raise ValueError(
+            "Cannot estimate capacity: pool is at 0% and --zeros is 0 "
+            "(need usage or at least one completed zero-cycle)"
+        )
+
+    capacity = max(1, int(round(week_tokens / cycles)))
+    current = max(0, int(round(capacity * frac)))
+    # Prefer residual so current + completed = week_tokens
+    completed = max(0, week_tokens - current)
+
+    return ZeroCycleEstimate(
+        zeros=int(zeros),
+        pool_percent=float(pool_percent),
+        week_tokens=int(week_tokens),
+        cycles=cycles,
+        capacity_tokens=capacity,
+        current_cycle_tokens=current,
+        completed_cycle_tokens=completed,
+    )
+
+
+def with_zero_estimate(
+    report: LocalTokenReport,
+    *,
+    zeros: int,
+    pool_percent: float,
+) -> LocalTokenReport:
+    """Attach a zero-cycle estimate to a local token report."""
+    est = estimate_zero_cycles(
+        report.total.total_tokens,
+        zeros=zeros,
+        pool_percent=pool_percent,
+    )
+    return LocalTokenReport(
+        sessions_home=report.sessions_home,
+        since=report.since,
+        until=report.until,
+        sessions_scanned=report.sessions_scanned,
+        sessions_with_usage=report.sessions_with_usage,
+        total=report.total,
+        by_model=report.by_model,
+        model_filter=report.model_filter,
+        matched_models=list(report.matched_models),
+        zero_estimate=est,
+        source_note=report.source_note,
+    )
 
 
 def resolve_model_names(
@@ -170,6 +275,7 @@ def filter_report_by_model(
         by_model=by_model,
         model_filter=model,
         matched_models=matched,
+        zero_estimate=report.zero_estimate,
         source_note=note,
     )
 

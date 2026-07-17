@@ -93,11 +93,21 @@ groktok --monthly    # monthly allotment only
 groktok --history    # include monthly history
 groktok --no-local   # skip local session token scan
 groktok --model grok-4.5   # local tokens for one model only
+groktok --zeros 1    # pool was wiped to 0% once during this week
 groktok --json       # machine-readable JSON
 groktok --format json
 ```
 
 `--model` matches case-insensitively (exact, then prefix, then substring). Example: `--model 4.5` or `--model kimi`.
+
+`--zeros N` is how many times the **weekly pool was reset to 0%** during the
+current billing window (completed full cycles). Combined with the live pool %
+from billing and local week tokens:
+
+```text
+capacity ≈ week_tokens / (N + pool_percent/100)
+current_cycle_tokens ≈ capacity × pool_percent/100
+```
 
 ### What the numbers mean
 

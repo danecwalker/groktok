@@ -12,7 +12,11 @@ from . import __version__
 from .auth import AuthError, load_credentials
 from .billing import BillingError, fetch_usage
 from .display import render_text, report_to_dict
-from .local_tokens import filter_report_by_model, scan_local_tokens
+from .local_tokens import (
+    filter_report_by_model,
+    scan_local_tokens,
+    with_zero_estimate,
+)
 
 JSON_SCHEMA_VERSION = 1
 
@@ -28,6 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
             "Auth: ~/.grok/auth.json from `grok login`, or GROKTOK_TOKEN.\n"
             "Local tokens: ~/.grok/sessions (weekly billing window).\n"
             "Model filter: --model grok-4.5  (exact / prefix / substring).\n"
+            "Mid-week resets: --zeros 1  (pool wiped to 0%% once this week).\n"
             "Usage tab: https://grok.com/?_s=usage"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -63,6 +68,17 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Only show local tokens for this model "
             "(case-insensitive exact, prefix, or substring match)"
+        ),
+    )
+    parser.add_argument(
+        "--zeros",
+        type=int,
+        metavar="N",
+        default=None,
+        help=(
+            "Times the weekly pool was reset to 0%% during this billing window "
+            "(completed full cycles). Used with local tokens + live pool %%: "
+            "capacity ≈ week_tokens / (N + pool%%/100)"
         ),
     )
     scope = parser.add_mutually_exclusive_group()
@@ -120,6 +136,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     else:
         sections = ("weekly", "monthly")
 
+    if args.zeros is not None and args.zeros < 0:
+        return _fail(
+            as_json=as_json,
+            code="usage",
+            message="--zeros must be >= 0",
+            exit_code=2,
+        )
+
     # Local Build tokens for the billing weekly window [start, end).
     local = None
     if not args.no_local and "weekly" in sections:
@@ -138,6 +162,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     message=str(exc),
                     exit_code=2,
                 )
+        if args.zeros is not None:
+            try:
+                local = with_zero_estimate(
+                    local,
+                    zeros=args.zeros,
+                    pool_percent=weekly.credit_usage_percent,
+                )
+            except ValueError as exc:
+                return _fail(
+                    as_json=as_json,
+                    code="usage",
+                    message=str(exc),
+                    exit_code=2,
+                )
     elif args.model and args.no_local:
         return _fail(
             as_json=as_json,
@@ -145,13 +183,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             message="--model requires a local token scan (omit --no-local)",
             exit_code=2,
         )
-    elif args.model and args.monthly and not args.weekly:
-        # Monthly-only mode has no weekly local block; still allow if user
-        # also wants weekly tokens — require weekly section.
+    elif args.zeros is not None and args.no_local:
         return _fail(
             as_json=as_json,
             code="usage",
-            message="--model applies to local weekly tokens; omit --monthly or use default/weekly view",
+            message="--zeros requires a local token scan (omit --no-local)",
+            exit_code=2,
+        )
+    elif (args.model or args.zeros is not None) and args.monthly and not args.weekly:
+        return _fail(
+            as_json=as_json,
+            code="usage",
+            message=(
+                "--model / --zeros apply to local weekly tokens; "
+                "omit --monthly or use default/weekly view"
+            ),
             exit_code=2,
         )
 
