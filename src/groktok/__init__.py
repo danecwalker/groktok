@@ -1,3 +1,3 @@
-"""groktok — Grok subscription weekly usage and monthly spend/tokens CLI."""
+"""groktok — Grok subscription weekly usage and monthly allotment CLI."""
 
-__version__ = "0.2.3"
+__version__ = "0.3.0"
