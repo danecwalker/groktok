@@ -11,8 +11,10 @@ from typing import Any, Optional, Sequence
 from . import __version__
 from .auth import AuthError, load_credentials
 from .billing import BillingError, fetch_usage
+from .config import TokenMeterState, load_meter_state, save_meter_state
 from .display import render_text, report_to_dict
 from .local_tokens import (
+    estimate_capacity_tokens,
     filter_report_by_model,
     scan_local_tokens,
     with_zero_estimate,
@@ -33,6 +35,8 @@ def build_parser() -> argparse.ArgumentParser:
             "Local tokens: ~/.grok/sessions (weekly billing window).\n"
             "Model filter: --model grok-4.5  (exact / prefix / substring).\n"
             "Mid-week resets: --zeros 1  (pool wiped to 0%% once this week).\n"
+            "With --zeros, weekly usage %% is computed from local tokens / capacity\n"
+            "(billing API %% is shown only as a secondary reference).\n"
             "Usage tab: https://grok.com/?_s=usage"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -76,9 +80,17 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="N",
         default=None,
         help=(
-            "Times the weekly pool was reset to 0%% during this billing window "
-            "(completed full cycles). Used with local tokens + live pool %%: "
-            "capacity ≈ week_tokens / (N + pool%%/100)"
+            "Times the weekly pool was reset to 0%% during this billing window. "
+            "Usage %% = 100×(week_tokens/capacity − N); capacity is estimated "
+            "once and saved, or refreshed with --recalibrate"
+        ),
+    )
+    parser.add_argument(
+        "--recalibrate",
+        action="store_true",
+        help=(
+            "Re-estimate token capacity from current week tokens + --zeros "
+            "(and billing %% as a one-shot invert anchor)"
         ),
     )
     scope = parser.add_mutually_exclusive_group()
@@ -164,10 +176,51 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 )
         if args.zeros is not None:
             try:
+                week_start = weekly.period.start
+                week_start_iso = (
+                    week_start.isoformat() if week_start is not None else ""
+                )
+                billing_pct = float(weekly.credit_usage_percent or 0.0)
+                saved = load_meter_state()
+                model_key = args.model
+                can_reuse = (
+                    saved is not None
+                    and not args.recalibrate
+                    and saved.zeros == args.zeros
+                    and saved.week_start == week_start_iso
+                    and (saved.model_filter or None) == (model_key or None)
+                )
+                if can_reuse:
+                    capacity = saved.capacity_tokens
+                    cap_source = "saved"
+                else:
+                    capacity = estimate_capacity_tokens(
+                        local.total.total_tokens,
+                        zeros=args.zeros,
+                        billing_pool_percent=billing_pct,
+                    )
+                    save_meter_state(
+                        TokenMeterState(
+                            week_start=week_start_iso,
+                            capacity_tokens=capacity,
+                            zeros=args.zeros,
+                            model_filter=model_key,
+                        )
+                    )
+                    cap_source = "estimated"
+                    if not as_json:
+                        print(
+                            f"token capacity ≈ {capacity:,} / cycle "
+                            f"({cap_source}; zeros={args.zeros})",
+                            file=sys.stderr,
+                        )
+
                 local = with_zero_estimate(
                     local,
                     zeros=args.zeros,
-                    pool_percent=weekly.credit_usage_percent,
+                    capacity_tokens=capacity,
+                    capacity_source=cap_source,
+                    billing_pool_percent=billing_pct,
                 )
             except ValueError as exc:
                 return _fail(
@@ -188,6 +241,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             as_json=as_json,
             code="usage",
             message="--zeros requires a local token scan (omit --no-local)",
+            exit_code=2,
+        )
+    elif args.recalibrate and args.zeros is None:
+        return _fail(
+            as_json=as_json,
+            code="usage",
+            message="--recalibrate requires --zeros N",
             exit_code=2,
         )
     elif (args.model or args.zeros is not None) and args.monthly and not args.weekly:

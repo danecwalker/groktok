@@ -73,33 +73,40 @@ class TokenBucket:
 @dataclass
 class ZeroCycleEstimate:
     """
-    Interpret week tokens when the pool was zeroed mid-window.
+    Token-based weekly usage when the pool was zeroed mid-window.
 
-        cycles   = zeros + (pool_percent / 100)
-        capacity ≈ week_tokens / cycles
-        current  ≈ capacity × (pool_percent / 100)
+    Capacity (tokens per full 0→100% cycle) is estimated once, then usage is:
+
+        cycles_used = week_tokens / capacity
+        usage_%     = 100 × (cycles_used − zeros)
+
+    which does **not** use the billing API for the live bar.
     """
 
     zeros: int
-    pool_percent: float
     week_tokens: int
     cycles: float
     capacity_tokens: int
     current_cycle_tokens: int
     completed_cycle_tokens: int
+    usage_percent: float
+    capacity_source: str  # estimated | saved
+    billing_pool_percent: Optional[float] = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "zeros": self.zeros,
-            "pool_percent": self.pool_percent,
             "week_tokens": self.week_tokens,
             "cycles": round(self.cycles, 4),
             "capacity_tokens": self.capacity_tokens,
             "current_cycle_tokens": self.current_cycle_tokens,
             "completed_cycle_tokens": self.completed_cycle_tokens,
+            "usage_percent": round(self.usage_percent, 3),
+            "capacity_source": self.capacity_source,
+            "billing_pool_percent": self.billing_pool_percent,
             "method": (
-                "capacity = week_tokens / (zeros + pool_percent/100); "
-                "current_cycle_tokens = capacity * pool_percent/100"
+                "usage_% = 100 × (week_tokens / capacity − zeros); "
+                "capacity from estimate or saved token_meter"
             ),
         }
 
@@ -142,44 +149,71 @@ class LocalTokenReport:
         return payload
 
 
-def estimate_zero_cycles(
+def estimate_capacity_tokens(
     week_tokens: int,
     *,
     zeros: int,
-    pool_percent: float,
-) -> ZeroCycleEstimate:
+    billing_pool_percent: float,
+) -> int:
     """
-    Derive per-cycle capacity from week tokens + mid-window zero count.
+    Estimate tokens per full pool cycle.
 
-    ``zeros`` = how many times the pool was wiped to 0% during this week
-    (completed full cycles no longer reflected in the live %).
+    Uses billing % only as a one-shot anchor to invert capacity:
+        capacity ≈ week_tokens / (zeros + billing_percent/100)
     """
     if zeros < 0:
         raise ValueError("--zeros must be >= 0")
     if week_tokens <= 0:
         raise ValueError("No local tokens in the weekly window to apply --zeros")
 
-    frac = max(0.0, float(pool_percent)) / 100.0
+    frac = max(0.0, float(billing_pool_percent)) / 100.0
+    # If billing says 0% but zeros > 0, all tokens were prior full cycles.
     cycles = float(zeros) + frac
     if cycles <= 0:
         raise ValueError(
-            "Cannot estimate capacity: pool is at 0% and --zeros is 0 "
-            "(need usage or at least one completed zero-cycle)"
+            "Cannot estimate capacity: billing pool is at 0% and --zeros is 0"
         )
+    return max(1, int(round(week_tokens / cycles)))
 
-    capacity = max(1, int(round(week_tokens / cycles)))
-    current = max(0, int(round(capacity * frac)))
-    # Prefer residual so current + completed = week_tokens
-    completed = max(0, week_tokens - current)
+
+def usage_from_capacity(
+    week_tokens: int,
+    *,
+    zeros: int,
+    capacity_tokens: int,
+    capacity_source: str,
+    billing_pool_percent: Optional[float] = None,
+) -> ZeroCycleEstimate:
+    """Live usage from local tokens + fixed capacity (not billing API %)."""
+    if capacity_tokens <= 0:
+        raise ValueError("capacity_tokens must be > 0")
+    if zeros < 0:
+        raise ValueError("--zeros must be >= 0")
+
+    cap = int(capacity_tokens)
+    t = int(week_tokens)
+    z = int(zeros)
+    cycles_used = float(t) / float(cap)
+    usage_pct = 100.0 * (cycles_used - float(z))
+    # Allow >100% (extra credits) and small negatives → clamp to 0 for display noise
+    if usage_pct < 0 and usage_pct > -1:
+        usage_pct = 0.0
+    current = max(0, int(round(t - z * cap)))
+    # If usage > 100%, current can exceed capacity; keep residual for accounting
+    if usage_pct > 100:
+        current = max(0, t - z * cap)
+    completed = max(0, t - current)
 
     return ZeroCycleEstimate(
-        zeros=int(zeros),
-        pool_percent=float(pool_percent),
-        week_tokens=int(week_tokens),
-        cycles=cycles,
-        capacity_tokens=capacity,
+        zeros=z,
+        week_tokens=t,
+        cycles=cycles_used,
+        capacity_tokens=cap,
         current_cycle_tokens=current,
         completed_cycle_tokens=completed,
+        usage_percent=usage_pct,
+        capacity_source=capacity_source,
+        billing_pool_percent=billing_pool_percent,
     )
 
 
@@ -187,13 +221,17 @@ def with_zero_estimate(
     report: LocalTokenReport,
     *,
     zeros: int,
-    pool_percent: float,
+    capacity_tokens: int,
+    capacity_source: str,
+    billing_pool_percent: Optional[float] = None,
 ) -> LocalTokenReport:
-    """Attach a zero-cycle estimate to a local token report."""
-    est = estimate_zero_cycles(
+    """Attach token-based usage (from capacity) to a local token report."""
+    est = usage_from_capacity(
         report.total.total_tokens,
         zeros=zeros,
-        pool_percent=pool_percent,
+        capacity_tokens=capacity_tokens,
+        capacity_source=capacity_source,
+        billing_pool_percent=billing_pool_percent,
     )
     return LocalTokenReport(
         sessions_home=report.sessions_home,

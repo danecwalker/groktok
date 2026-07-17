@@ -64,7 +64,8 @@ groktok
 | Machine-readable | `groktok --json` |
 | Skip local token scan | `groktok --no-local` |
 | Local tokens for one model | `groktok --model grok-4.5` |
-| Mid-week pool zeroings | `groktok --zeros 1` |
+| Mid-week pool zeroings (token usage bar) | `groktok --zeros 1` |
+| Re-estimate token capacity | `groktok --zeros 1 --recalibrate` |
 | Monthly history | `groktok --history` |
 
 If only `uvx` is available, prefix the same args:

@@ -155,6 +155,11 @@ def report_to_dict(
     }
     if local is not None:
         weekly_dict["local_build_tokens"] = local.as_dict()
+        if local.zero_estimate is not None:
+            weekly_dict["usage_percent_token_meter"] = round(
+                local.zero_estimate.usage_percent, 3
+            )
+            weekly_dict["usage_source"] = "local_tokens"
 
     payload: dict[str, Any] = {
         "account": {
@@ -216,11 +221,39 @@ def render_text(
 
     if "weekly" in sections:
         weekly = report.weekly
-        w_pct = weekly.credit_usage_percent
+        api_pct = weekly.credit_usage_percent
+        # Token-based usage when --zeros produced a capacity estimate.
+        token_usage = (
+            local.zero_estimate.usage_percent
+            if local is not None and local.zero_estimate is not None
+            else None
+        )
+        use_token_meter = token_usage is not None
+        w_pct = float(token_usage) if use_token_meter else api_pct
+        # Bar saturates at 100%; label can show >100% (extra credits).
+        bar_pct = min(max(w_pct, 0.0), 100.0)
         period_label = _period_type_label(weekly.period.type)
-        line(style.bold(f"Weekly pool  ({period_label})"))
-        bar = style.level(w_pct, _bar(w_pct, bar_width))
-        line(f"  {bar}  {style.level(w_pct, f'{w_pct:.1f}% used')}")
+
+        if use_token_meter:
+            line(style.bold(f"Weekly usage  ({period_label}, local tokens)"))
+            bar = style.level(bar_pct, _bar(bar_pct, bar_width))
+            line(
+                f"  {bar}  "
+                f"{style.level(bar_pct, f'{w_pct:.1f}% used')}  "
+                f"(token meter)"
+            )
+            if abs(w_pct - api_pct) > 0.5:
+                line(
+                    style.dim(
+                        f"  Billing API          {api_pct:.1f}% used  "
+                        f"(reference only — not used for this bar)"
+                    )
+                )
+        else:
+            line(style.bold(f"Weekly pool  ({period_label})"))
+            bar = style.level(w_pct, _bar(w_pct, bar_width))
+            line(f"  {bar}  {style.level(w_pct, f'{w_pct:.1f}% used')}")
+
         line(
             f"  {_fmt_dt(weekly.period.start)}  →  {_fmt_dt(weekly.period.end)}"
         )
@@ -228,7 +261,7 @@ def render_text(
 
         if weekly.product_usage:
             line()
-            line(style.dim("  By product"))
+            line(style.dim("  By product  (billing API)"))
             for p in sorted(weekly.product_usage, key=lambda x: -x.usage_percent):
                 pbar = style.level(p.usage_percent, _bar(p.usage_percent, 16))
                 line(f"    {p.product:<14} {pbar}  {p.usage_percent:.1f}%")
@@ -308,30 +341,38 @@ def render_text(
                 line()
                 line(
                     style.dim(
-                        f"    Zero-cycles (--zeros {z.zeros})  "
-                        f"using live pool {z.pool_percent:.1f}%"
+                        f"    Token meter (--zeros {z.zeros}, "
+                        f"capacity {z.capacity_source})"
                     )
                 )
                 line(
-                    f"    Cycles this week   "
-                    f"{z.cycles:.2f}  "
-                    f"({z.zeros} full + {z.pool_percent:.1f}% current)"
-                )
-                line(
-                    f"    Est. capacity/cycle"
-                    f"  {style.cyan(_fmt_tokens(z.capacity_tokens))}  "
+                    f"    Capacity / cycle   "
+                    f"{style.cyan(_fmt_tokens(z.capacity_tokens))}  "
                     f"({z.capacity_tokens:,})"
                 )
                 line(
-                    f"    Completed cycles   "
-                    f"{_fmt_tokens(z.completed_cycle_tokens)}  "
-                    f"({z.completed_cycle_tokens:,}) tokens"
+                    f"    Cycles used        "
+                    f"{z.cycles:.2f}  "
+                    f"({z.zeros} zeroed + current)"
                 )
                 line(
                     f"    Current cycle      "
                     f"{style.cyan(_fmt_tokens(z.current_cycle_tokens))}  "
-                    f"({z.current_cycle_tokens:,}) tokens"
+                    f"/ {_fmt_tokens(z.capacity_tokens)}  "
+                    f"→ {z.usage_percent:.1f}%"
                 )
+                line(
+                    f"    Completed (zeroed) "
+                    f"{_fmt_tokens(z.completed_cycle_tokens)}  "
+                    f"({z.completed_cycle_tokens:,}) tokens"
+                )
+                if z.billing_pool_percent is not None:
+                    line(
+                        style.dim(
+                            f"    Billing API %      {z.billing_pool_percent:.1f}%  "
+                            f"(not used for usage bar when --zeros is set)"
+                        )
+                    )
             line(style.dim(f"    {local.source_note}"))
 
         if "monthly" in sections:

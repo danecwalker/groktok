@@ -101,13 +101,17 @@ groktok --format json
 `--model` matches case-insensitively (exact, then prefix, then substring). Example: `--model 4.5` or `--model kimi`.
 
 `--zeros N` is how many times the **weekly pool was reset to 0%** during the
-current billing window (completed full cycles). Combined with the live pool %
-from billing and local week tokens:
+current billing window. With `--zeros`, **usage % is from local tokens**, not
+the billing API bar:
 
 ```text
-capacity ≈ week_tokens / (N + pool_percent/100)
-current_cycle_tokens ≈ capacity × pool_percent/100
+capacity ≈ week_tokens / (N + billing_%/100)   # estimated once, then saved
+usage_%  = 100 × (week_tokens / capacity − N)
 ```
+
+Billing % is only used as a one-shot anchor to estimate capacity (refresh with
+`--recalibrate`). After that the weekly bar is token-driven and can exceed 100%
+when you burn extra credits.
 
 ### What the numbers mean
 
