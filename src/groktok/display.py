@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import json
 import shutil
 import sys
 from datetime import datetime, timezone
 from typing import Any, Optional, TextIO
 
 from .billing import UsageReport
+from .local_tokens import LocalTokenReport
 
 
 def _use_color(stream: TextIO) -> bool:
@@ -76,6 +76,14 @@ def _fmt_money_cents(cents: Optional[int]) -> str:
     return f"${cents / 100.0:,.2f}"
 
 
+def _fmt_tokens(n: int) -> str:
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.2f}M"
+    if n >= 10_000:
+        return f"{n / 1_000:.1f}k"
+    return f"{n:,}"
+
+
 def _remaining(end: Optional[datetime]) -> str:
     if not end:
         return "—"
@@ -101,12 +109,52 @@ def _period_type_label(raw: Optional[str]) -> str:
     return raw.replace("USAGE_PERIOD_TYPE_", "").replace("_", " ").title()
 
 
-def report_to_dict(report: UsageReport, *, history: bool = False) -> dict[str, Any]:
+def report_to_dict(
+    report: UsageReport,
+    *,
+    history: bool = False,
+    local: Optional[LocalTokenReport] = None,
+) -> dict[str, Any]:
     weekly = report.weekly
     monthly = report.monthly
 
     def iso(dt: Optional[datetime]) -> Optional[str]:
         return dt.isoformat() if dt else None
+
+    weekly_dict: dict[str, Any] = {
+        "period_type": weekly.period.type,
+        "usage_percent": weekly.credit_usage_percent,
+        "start": iso(weekly.period.start),
+        "end": iso(weekly.period.end),
+        "resets_in_seconds": (
+            int((weekly.period.end - datetime.now(timezone.utc)).total_seconds())
+            if weekly.period.end
+            else None
+        ),
+        "product_usage": [
+            {"product": p.product, "usage_percent": p.usage_percent}
+            for p in weekly.product_usage
+        ],
+        "extra_usage_credits_usd": (
+            weekly.prepaid_balance_cents / 100.0
+            if weekly.prepaid_balance_cents is not None
+            else None
+        ),
+        "on_demand_cap_usd": (
+            weekly.on_demand_cap_cents / 100.0
+            if weekly.on_demand_cap_cents is not None
+            else None
+        ),
+        "on_demand_used_usd": (
+            weekly.on_demand_used_cents / 100.0
+            if weekly.on_demand_used_cents is not None
+            else None
+        ),
+        "is_unified_billing_user": weekly.is_unified_billing_user,
+        "top_up_method": weekly.top_up_method,
+    }
+    if local is not None:
+        weekly_dict["local_build_tokens"] = local.as_dict()
 
     payload: dict[str, Any] = {
         "account": {
@@ -115,38 +163,7 @@ def report_to_dict(report: UsageReport, *, history: bool = False) -> dict[str, A
             "team_id": report.team_id,
             "auth_source": report.credentials_source,
         },
-        "weekly": {
-            "period_type": weekly.period.type,
-            "usage_percent": weekly.credit_usage_percent,
-            "start": iso(weekly.period.start),
-            "end": iso(weekly.period.end),
-            "resets_in_seconds": (
-                int((weekly.period.end - datetime.now(timezone.utc)).total_seconds())
-                if weekly.period.end
-                else None
-            ),
-            "product_usage": [
-                {"product": p.product, "usage_percent": p.usage_percent}
-                for p in weekly.product_usage
-            ],
-            "extra_usage_credits_usd": (
-                weekly.prepaid_balance_cents / 100.0
-                if weekly.prepaid_balance_cents is not None
-                else None
-            ),
-            "on_demand_cap_usd": (
-                weekly.on_demand_cap_cents / 100.0
-                if weekly.on_demand_cap_cents is not None
-                else None
-            ),
-            "on_demand_used_usd": (
-                weekly.on_demand_used_cents / 100.0
-                if weekly.on_demand_used_cents is not None
-                else None
-            ),
-            "is_unified_billing_user": weekly.is_unified_billing_user,
-            "top_up_method": weekly.top_up_method,
-        },
+        "weekly": weekly_dict,
         "monthly": {
             "used_usd": monthly.used_usd,
             "limit_usd": monthly.monthly_limit_usd,
@@ -179,6 +196,7 @@ def report_to_dict(report: UsageReport, *, history: bool = False) -> dict[str, A
 def render_text(
     report: UsageReport,
     *,
+    local: Optional[LocalTokenReport] = None,
     show_history: bool = False,
     sections: tuple[str, ...] = ("weekly", "monthly"),
     stream: Optional[TextIO] = None,
@@ -228,6 +246,43 @@ def render_text(
                 f"{_fmt_money_cents(weekly.on_demand_used_cents)} / "
                 f"{_fmt_money_cents(weekly.on_demand_cap_cents)}"
             )
+
+        if local is not None:
+            t = local.total
+            line()
+            line(style.dim("  Local Build tokens  (this machine, weekly window)"))
+            line(
+                style.dim(
+                    f"    {local.sessions_with_usage} sessions with usage · "
+                    f"{local.sessions_scanned} scanned"
+                )
+            )
+            line(
+                f"    Total              "
+                f"{style.cyan(_fmt_tokens(t.total_tokens))}  ({t.total_tokens:,})"
+            )
+            line(
+                f"    Input / uncached   "
+                f"{_fmt_tokens(t.input_tokens)} / "
+                f"{_fmt_tokens(t.uncached_input_tokens)}"
+            )
+            line(
+                f"    Output / reasoning "
+                f"{_fmt_tokens(t.output_tokens)} / "
+                f"{_fmt_tokens(t.reasoning_tokens)}"
+            )
+            line(f"    Calls / turns      {t.model_calls:,} / {t.turns:,}")
+            if local.by_model:
+                line(style.dim("    By model"))
+                for model, bucket in sorted(
+                    local.by_model.items(), key=lambda kv: -kv[1].total_tokens
+                ):
+                    line(
+                        f"      {model:<16} "
+                        f"{_fmt_tokens(bucket.total_tokens):>10}  "
+                        f"({bucket.turns} turns)"
+                    )
+            line(style.dim(f"    {local.source_note}"))
 
         if "monthly" in sections:
             line()

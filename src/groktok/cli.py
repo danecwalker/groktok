@@ -12,6 +12,7 @@ from . import __version__
 from .auth import AuthError, load_credentials
 from .billing import BillingError, fetch_usage
 from .display import render_text, report_to_dict
+from .local_tokens import scan_local_tokens
 
 JSON_SCHEMA_VERSION = 1
 
@@ -20,11 +21,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="groktok",
         description=(
-            "Show your Grok subscription weekly usage pool and monthly "
-            "allotment (same billing data as Settings → Usage on grok.com)."
+            "Show your Grok subscription weekly usage pool, monthly "
+            "allotment, and local Build tokens for the weekly window."
         ),
         epilog=(
             "Auth: ~/.grok/auth.json from `grok login`, or GROKTOK_TOKEN.\n"
+            "Local tokens: ~/.grok/sessions (weekly billing window).\n"
             "Usage tab: https://grok.com/?_s=usage"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -48,6 +50,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--history",
         action="store_true",
         help="Include monthly usage history (JSON and text)",
+    )
+    parser.add_argument(
+        "--no-local",
+        action="store_true",
+        help="Skip local session token scan",
     )
     scope = parser.add_mutually_exclusive_group()
     scope.add_argument(
@@ -104,8 +111,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     else:
         sections = ("weekly", "monthly")
 
+    # Local Build tokens for the billing weekly window [start, end).
+    local = None
+    if not args.no_local and "weekly" in sections:
+        weekly = report.weekly
+        local = scan_local_tokens(
+            since=weekly.period.start,
+            until=weekly.period.end,
+        )
+
     if as_json:
-        payload = report_to_dict(report, history=args.history)
+        payload = report_to_dict(
+            report, history=args.history, local=local
+        )
         if args.weekly:
             payload.pop("monthly", None)
         elif args.monthly:
@@ -121,7 +139,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
         return 0
 
-    render_text(report, show_history=args.history, sections=sections)
+    render_text(
+        report,
+        local=local,
+        show_history=args.history,
+        sections=sections,
+    )
     return 0
 
 

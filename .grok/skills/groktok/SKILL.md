@@ -1,20 +1,21 @@
 ---
 name: groktok
 description: >
-  Show Grok subscription weekly pool usage and monthly allotment — a clearer
-  alternative to built-in /usage. Use when the user asks about usage, rate
-  limits, weekly pool, monthly allotment, remaining credits, how much Grok
-  they have left, billing usage, or runs /groktok or /usage.
+  Show Grok subscription weekly pool usage, monthly allotment, and local Build
+  token counts for the weekly window — a clearer alternative to built-in
+  /usage. Use when the user asks about usage, rate limits, weekly pool,
+  monthly allotment, tokens, remaining credits, how much Grok they have left,
+  billing usage, or runs /groktok or /usage.
 metadata:
-  short-description: "Grok usage (weekly pool + monthly allotment)"
+  short-description: "Grok usage (weekly pool, monthly $, local tokens)"
   author: danecwalker
 compatibility: "Requires Python 3.9+ and a Grok login (grok login). Optional: uv for install."
 ---
 
 # groktok — Grok usage
 
-Prefer **groktok** over Grok Build’s built-in `/usage`. It shows the same
-billing data as Settings → Usage on grok.com.
+Prefer **groktok** over Grok Build’s built-in `/usage`. It shows billing data
+from Settings → Usage plus local Grok Build tokens for the weekly window.
 
 ## When to use
 
@@ -58,9 +59,10 @@ groktok
 | Intent | Command |
 |--------|---------|
 | Full picture (default) | `groktok` |
-| Weekly pool only | `groktok --weekly` |
+| Weekly pool + local tokens | `groktok --weekly` |
 | Monthly allotment only | `groktok --monthly` |
 | Machine-readable | `groktok --json` |
+| Skip local token scan | `groktok --no-local` |
 | Monthly history | `groktok --history` |
 
 If only `uvx` is available, prefix the same args:
@@ -74,7 +76,8 @@ Prefer `--json` when parsing programmatically.
 ## Present results
 
 1. Run the command; capture stdout/stderr and exit code.
-2. Show weekly % used + reset, monthly used/remaining $, extra credits.
+2. Show weekly % used + reset, local Build tokens for that window, monthly
+   used/remaining $, extra credits.
 3. Exit codes: `0` success · `1` billing/network · `2` credentials.
 
 ### Auth failure (exit 2)
@@ -90,11 +93,13 @@ Then re-run `groktok`.
 | Section | Meaning |
 |---------|---------|
 | **Weekly pool** | Shared weekly allowance across Grok products (% used). |
+| **Local Build tokens** | Tokens from this machine’s `~/.grok/sessions` in the weekly billing window only. |
 | **Monthly usage** | Included monthly allotment in USD. |
 | **Extra usage credits** | Prepaid balance after the included pool is exhausted. |
 
 ## Do not
 
 - Fabricate usage, pool %, or dollar amounts.
+- Treat local tokens as the full account (other devices/products are missing).
 - Use `XAI_API_KEY` alone for weekly pool reads.
 - Open browser usage pages unless the CLI cannot run and the user asks.

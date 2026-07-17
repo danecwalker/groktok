@@ -1,9 +1,11 @@
 # groktok
 
-CLI for your **Grok subscription weekly usage** and **monthly allotment**.
+CLI for your **Grok subscription weekly usage**, **monthly allotment**, and
+**local Build tokens** for the current weekly billing window.
 
 It reads the same billing data that powers **Settings → Usage** on
-[grok.com](https://grok.com/?_s=usage) and Grok Build’s `/usage` command.
+[grok.com](https://grok.com/?_s=usage), plus token counts from this machine’s
+`~/.grok/sessions` logs for that week’s start → end.
 
 ```
 $ groktok
@@ -20,6 +22,11 @@ Weekly pool  (Weekly)
     GrokBuild      ████████████████  68.0%
 
   Extra usage credits  $9.38 remaining
+
+  Local Build tokens  (this machine, weekly window)
+    Total              12.34M  (12,340,000)
+    Input / uncached   11.00M / 2.00M
+    Output / reasoning 1.34M / 0.50M
 
 Monthly usage  (included allotment)
   ██████████████████████░░░░░░  $139.05 / $180.00  (77.3%)
@@ -40,7 +47,7 @@ Monthly usage  (included allotment)
 ```bash
 uv tool install "git+https://github.com/danecwalker/groktok.git"
 # pin a release
-uv tool install "git+https://github.com/danecwalker/groktok.git@v0.3.0"
+uv tool install "git+https://github.com/danecwalker/groktok.git@v0.3.1"
 ```
 
 Upgrade:
@@ -80,10 +87,11 @@ for the developer API and generally cannot read the subscription usage pool.
 ## Usage
 
 ```bash
-groktok              # weekly + monthly
-groktok --weekly     # weekly pool only
+groktok              # weekly + monthly + local tokens
+groktok --weekly     # weekly pool + local tokens
 groktok --monthly    # monthly allotment only
 groktok --history    # include monthly history
+groktok --no-local   # skip local session token scan
 groktok --json       # machine-readable JSON
 groktok --format json
 ```
@@ -93,6 +101,7 @@ groktok --format json
 | Section | Source | Meaning |
 |---|---|---|
 | **Weekly pool** | `GET …/billing?format=credits` | Shared weekly usage allowance across Grok products (% used, per-product when available). |
+| **Local Build tokens** | `~/.grok/sessions/**/updates.jsonl` | Tokens from Grok Build on **this machine** for turns in the weekly billing window `[start, end)`. |
 | **Monthly usage** | `GET …/billing?format=tokens` | Included monthly allotment in **USD** (values from the API are cents). |
 | **Extra usage credits** | prepaid balance on the weekly payload | Pay-as-you-go top-up after the included pool is exhausted. |
 
@@ -106,7 +115,7 @@ groktok --json --weekly
 ```json
 {
   "ok": true,
-  "version": "0.3.0",
+  "version": "0.3.1",
   "schema_version": 1,
   "generated_at": "…",
   "account": { "email": "…", "user_id": "…", "team_id": "…", "auth_source": "…" },
@@ -116,7 +125,10 @@ groktok --json --weekly
     "end": "…",
     "resets_in_seconds": 123456,
     "product_usage": [{ "product": "GrokBuild", "usage_percent": 68.0 }],
-    "extra_usage_credits_usd": 9.38
+    "extra_usage_credits_usd": 9.38,
+    "local_build_tokens": {
+      "totals": { "total_tokens": 0, "input_tokens": 0, "output_tokens": 0 }
+    }
   },
   "monthly": {
     "used_usd": 139.05,
@@ -162,8 +174,8 @@ npx skills add https://github.com/danecwalker/groktok --skill groktok
 2. Commit, tag, and push:
 
 ```bash
-git tag v0.3.0
-git push origin v0.3.0
+git tag v0.3.1
+git push origin v0.3.1
 ```
 
 3. GitHub Actions builds the sdist + wheel and attaches them to a GitHub Release.
