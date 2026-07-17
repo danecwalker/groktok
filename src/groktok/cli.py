@@ -12,7 +12,7 @@ from . import __version__
 from .auth import AuthError, load_credentials
 from .billing import BillingError, fetch_usage
 from .display import render_text, report_to_dict
-from .local_tokens import scan_local_tokens
+from .local_tokens import filter_report_by_model, scan_local_tokens
 
 JSON_SCHEMA_VERSION = 1
 
@@ -27,6 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=(
             "Auth: ~/.grok/auth.json from `grok login`, or GROKTOK_TOKEN.\n"
             "Local tokens: ~/.grok/sessions (weekly billing window).\n"
+            "Model filter: --model grok-4.5  (exact / prefix / substring).\n"
             "Usage tab: https://grok.com/?_s=usage"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -55,6 +56,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-local",
         action="store_true",
         help="Skip local session token scan",
+    )
+    parser.add_argument(
+        "--model",
+        metavar="NAME",
+        help=(
+            "Only show local tokens for this model "
+            "(case-insensitive exact, prefix, or substring match)"
+        ),
     )
     scope = parser.add_mutually_exclusive_group()
     scope.add_argument(
@@ -118,6 +127,32 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         local = scan_local_tokens(
             since=weekly.period.start,
             until=weekly.period.end,
+        )
+        if args.model:
+            try:
+                local = filter_report_by_model(local, args.model)
+            except ValueError as exc:
+                return _fail(
+                    as_json=as_json,
+                    code="usage",
+                    message=str(exc),
+                    exit_code=2,
+                )
+    elif args.model and args.no_local:
+        return _fail(
+            as_json=as_json,
+            code="usage",
+            message="--model requires a local token scan (omit --no-local)",
+            exit_code=2,
+        )
+    elif args.model and args.monthly and not args.weekly:
+        # Monthly-only mode has no weekly local block; still allow if user
+        # also wants weekly tokens — require weekly section.
+        return _fail(
+            as_json=as_json,
+            code="usage",
+            message="--model applies to local weekly tokens; omit --monthly or use default/weekly view",
+            exit_code=2,
         )
 
     if as_json:

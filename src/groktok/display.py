@@ -250,13 +250,32 @@ def render_text(
         if local is not None:
             t = local.total
             line()
-            line(style.dim("  Local Build tokens  (this machine, weekly window)"))
+            title = "  Local Build tokens  (this machine, weekly window)"
+            if local.matched_models:
+                if len(local.matched_models) == 1:
+                    title = (
+                        f"  Local Build tokens  "
+                        f"({local.matched_models[0]}, weekly window)"
+                    )
+                else:
+                    title = (
+                        f"  Local Build tokens  "
+                        f"(models: {', '.join(local.matched_models)}, weekly window)"
+                    )
+            line(style.dim(title))
             line(
                 style.dim(
                     f"    {local.sessions_with_usage} sessions with usage · "
                     f"{local.sessions_scanned} scanned"
                 )
             )
+            if local.model_filter:
+                line(
+                    style.dim(
+                        f"    filter             --model {local.model_filter!r} "
+                        f"→ {', '.join(local.matched_models)}"
+                    )
+                )
             line(
                 f"    Total              "
                 f"{style.cyan(_fmt_tokens(t.total_tokens))}  ({t.total_tokens:,})"
@@ -272,7 +291,9 @@ def render_text(
                 f"{_fmt_tokens(t.reasoning_tokens)}"
             )
             line(f"    Calls / turns      {t.model_calls:,} / {t.turns:,}")
-            if local.by_model:
+            if local.by_model and (
+                not local.matched_models or len(local.by_model) > 1
+            ):
                 line(style.dim("    By model"))
                 for model, bucket in sorted(
                     local.by_model.items(), key=lambda kv: -kv[1].total_tokens

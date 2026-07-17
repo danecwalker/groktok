@@ -79,13 +79,15 @@ class LocalTokenReport:
     sessions_with_usage: int
     total: TokenBucket
     by_model: dict[str, TokenBucket] = field(default_factory=dict)
+    model_filter: Optional[str] = None
+    matched_models: list[str] = field(default_factory=list)
     source_note: str = (
         "Local Grok Build sessions only (~/.grok/sessions). "
         "Does not include Chat/Imagine/Voice or other machines."
     )
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "source": str(self.sessions_home),
             "note": self.source_note,
             "since": self.since.isoformat() if self.since else None,
@@ -97,6 +99,79 @@ class LocalTokenReport:
                 m: b.as_dict() for m, b in sorted(self.by_model.items())
             },
         }
+        if self.model_filter is not None:
+            payload["model_filter"] = self.model_filter
+            payload["matched_models"] = list(self.matched_models)
+        return payload
+
+
+def resolve_model_names(
+    by_model: dict[str, TokenBucket],
+    query: str,
+) -> list[str]:
+    """
+    Match model names case-insensitively.
+
+    Order: exact → prefix → substring. Raises ValueError if nothing matches.
+    """
+    q = (query or "").strip()
+    if not q:
+        raise ValueError("Model filter is empty")
+    if not by_model:
+        raise ValueError("No local model usage found in this window")
+
+    names = list(by_model.keys())
+    ql = q.lower()
+
+    exact = [n for n in names if n.lower() == ql]
+    if exact:
+        return exact
+
+    prefix = sorted(n for n in names if n.lower().startswith(ql))
+    if prefix:
+        return prefix
+
+    substr = sorted(n for n in names if ql in n.lower())
+    if substr:
+        return substr
+
+    available = ", ".join(sorted(names))
+    raise ValueError(
+        f"No model matching {query!r}. Available: {available}"
+    )
+
+
+def filter_report_by_model(
+    report: LocalTokenReport,
+    model: str,
+) -> LocalTokenReport:
+    """Return a new report whose totals are only the matched model(s)."""
+    matched = resolve_model_names(report.by_model, model)
+    total = TokenBucket()
+    by_model: dict[str, TokenBucket] = {}
+    for name in matched:
+        bucket = report.by_model[name]
+        by_model[name] = bucket
+        total.merge(bucket)
+
+    note = report.source_note
+    if len(matched) == 1:
+        note = f"Filtered to model {matched[0]}. " + note
+    else:
+        note = f"Filtered to models: {', '.join(matched)}. " + note
+
+    return LocalTokenReport(
+        sessions_home=report.sessions_home,
+        since=report.since,
+        until=report.until,
+        sessions_scanned=report.sessions_scanned,
+        sessions_with_usage=report.sessions_with_usage,
+        total=total,
+        by_model=by_model,
+        model_filter=model,
+        matched_models=matched,
+        source_note=note,
+    )
 
 
 def sessions_root() -> Path:

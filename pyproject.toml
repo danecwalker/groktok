@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "groktok"
-version = "0.3.1"
+version = "0.3.2"
 description = "CLI for Grok subscription weekly usage, monthly allotment, and local Build tokens"
 readme = "README.md"
 requires-python = ">=3.9"

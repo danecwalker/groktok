@@ -92,9 +92,12 @@ groktok --weekly     # weekly pool + local tokens
 groktok --monthly    # monthly allotment only
 groktok --history    # include monthly history
 groktok --no-local   # skip local session token scan
+groktok --model grok-4.5   # local tokens for one model only
 groktok --json       # machine-readable JSON
 groktok --format json
 ```
+
+`--model` matches case-insensitively (exact, then prefix, then substring). Example: `--model 4.5` or `--model kimi`.
 
 ### What the numbers mean
 
